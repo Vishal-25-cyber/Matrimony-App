@@ -452,18 +452,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             ],
                           ),
                           padding: const EdgeInsets.all(2.5),
-                          child: Container(
-                            decoration: const BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: Colors.white,
-                            ),
-                            padding: const EdgeInsets.all(1.5),
-                            child: ClipOval(
-                              child: Image.asset(
-                                'assets/images/founder_arumugam.jpg',
-                                fit: BoxFit.cover,
-                                alignment: const Alignment(0, -0.2),
-                              ),
+                          child: ClipOval(
+                            child: Image.asset(
+                              'assets/images/founder_arumugam.jpg',
+                              fit: BoxFit.cover,
                             ),
                           ),
                         ),

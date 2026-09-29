@@ -152,19 +152,11 @@ class _SplashScreenState extends State<SplashScreen>
                                   ),
                                 ],
                               ),
-                              padding: const EdgeInsets.all(4),
-                              child: Container(
-                                decoration: const BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white,
-                                ),
-                                padding: const EdgeInsets.all(2.5),
-                                child: ClipOval(
-                                  child: Image.asset(
-                                    'assets/images/founder_arumugam.jpg',
-                                    fit: BoxFit.cover,
-                                    alignment: const Alignment(0, -0.2),
-                                  ),
+                              padding: const EdgeInsets.all(3.5),
+                              child: ClipOval(
+                                child: Image.asset(
+                                  'assets/images/founder_arumugam.jpg',
+                                  fit: BoxFit.cover,
                                 ),
                               ),
                             ),
