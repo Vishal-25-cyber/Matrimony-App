@@ -330,6 +330,7 @@ class ProfileModel {
       'email': email,
       'avatarSeed': avatarSeed,
       'avatarColorHex': avatarColorHex,
+      'imageAsset': imageAsset ?? defaultCatalogAsset(id, name),
       'profileImageUrl': profileImageUrl,
       'r2ProfileImageUrl': profileImageUrl,
       'hasCustomImage': imageBytes != null || (profileImageUrl != null && profileImageUrl!.isNotEmpty),
@@ -340,10 +341,71 @@ class ProfileModel {
     };
   }
 
+  /// Default asset photo for predefined catalog profiles
+  static String? defaultCatalogAsset(String id, [String? name]) {
+    switch (id) {
+      case 'PM-1001':
+        return 'assets/images/bride_soundarya.jpg';
+      case 'PM-1002':
+        return 'assets/images/doctor_kavitha.jpg';
+      case 'PM-1003':
+      case 'PM-1004':
+        return 'assets/images/bride_sneha.jpg';
+      case 'PM-1005':
+        return 'assets/images/doctor_kavitha.jpg';
+      case 'PM-1006':
+      case 'PM-1007':
+      case 'PM-1008':
+        return 'assets/images/user_karthik.jpg';
+      case 'PM-1009':
+        return 'assets/images/bride_sneha.jpg';
+      case 'PM-1010':
+        return 'assets/images/wedding_couple.jpg';
+      case 'PM-1011':
+        return 'assets/images/bride_sneha.jpg';
+      case 'PM-1012':
+      case 'PM-1013':
+      case 'PM-1014':
+        return 'assets/images/user_karthik.jpg';
+      default:
+        if (name != null && name.isNotEmpty) {
+          final n = name.toLowerCase();
+          if (n.contains('soundarya') || n.contains('சௌந்தர்யா')) {
+            return 'assets/images/bride_soundarya.jpg';
+          }
+          if (n.contains('kavitha') || n.contains('கவிதா')) {
+            return 'assets/images/doctor_kavitha.jpg';
+          }
+          if (n.contains('sneha') || n.contains('ஸ்நேகா')) {
+            return 'assets/images/bride_sneha.jpg';
+          }
+          if (n.contains('karthik') || n.contains('கார்த்திக்')) {
+            return 'assets/images/user_karthik.jpg';
+          }
+        }
+        return null;
+    }
+  }
+
+  /// Returns active image asset or catalog fallback
+  String? get displayImageAsset {
+    if (imageAsset != null && imageAsset!.trim().isNotEmpty) {
+      return imageAsset!.trim();
+    }
+    return defaultCatalogAsset(id, name);
+  }
+
   factory ProfileModel.fromMap(Map<String, dynamic> map) {
+    final id = map['id']?.toString() ?? 'PM-1000';
+    final name = map['name']?.toString() ?? '';
+    final rawAsset = map['imageAsset']?.toString();
+    final resolvedAsset = (rawAsset != null && rawAsset.trim().isNotEmpty)
+        ? rawAsset.trim()
+        : defaultCatalogAsset(id, name);
+
     return ProfileModel(
-      id: map['id']?.toString() ?? 'PM-1000',
-      name: map['name']?.toString() ?? '',
+      id: id,
+      name: name,
       nameTamil: map['nameTamil']?.toString() ?? map['name']?.toString(),
       gender: map['gender']?.toString() ?? 'Groom',
       age: int.tryParse(map['age']?.toString() ?? '') ?? 26,
@@ -366,6 +428,7 @@ class ProfileModel {
       harmonyPercentage: map['harmonyPercentage']?.toString(),
       kootuPorutham: map['kootuPorutham']?.toString(),
       specialBadge: map['specialBadge']?.toString(),
+      imageAsset: resolvedAsset,
       education: map['education']?.toString() ?? '',
       degree: map['degree']?.toString(),
       occupation: map['occupation']?.toString() ?? '',

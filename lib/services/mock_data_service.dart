@@ -1809,17 +1809,37 @@ class MockDataService extends ChangeNotifier {
           final existingIdx = _profiles.indexWhere((p) => p.id == id);
           final p = ProfileModel.fromMap(doc);
           if (existingIdx != -1) {
-            // Keep unlocked contact state and shortlist state if present in memory or Atlas
+            // Keep unlocked contact state, shortlist state, and image assets
             final wasUnlocked = _profiles[existingIdx].isContactUnlocked;
             final wasHoroscopeUnlocked = _profiles[existingIdx].isHoroscopeUnlocked;
             final wasShortlisted = _profiles[existingIdx].isShortlisted;
+            final prevImageAsset = _profiles[existingIdx].imageAsset;
+            final prevImageBytes = _profiles[existingIdx].imageBytes;
+            final prevProfileImageUrl = _profiles[existingIdx].profileImageUrl;
+
+            final effectiveImageAsset = (p.imageAsset != null && p.imageAsset!.isNotEmpty)
+                ? p.imageAsset
+                : (prevImageAsset != null && prevImageAsset.isNotEmpty
+                    ? prevImageAsset
+                    : ProfileModel.defaultCatalogAsset(id, p.name));
+
+            final effectiveImageUrl = (p.profileImageUrl != null && p.profileImageUrl!.isNotEmpty)
+                ? p.profileImageUrl
+                : prevProfileImageUrl;
+
             _profiles[existingIdx] = p.copyWith(
               isContactUnlocked: wasUnlocked || p.isContactUnlocked,
               isHoroscopeUnlocked: wasHoroscopeUnlocked || p.isHoroscopeUnlocked,
               isShortlisted: wasShortlisted || p.isShortlisted,
+              imageAsset: effectiveImageAsset,
+              imageBytes: p.imageBytes ?? prevImageBytes,
+              profileImageUrl: effectiveImageUrl,
             );
           } else {
-            _profiles.insert(0, p);
+            final effectiveImageAsset = (p.imageAsset != null && p.imageAsset!.isNotEmpty)
+                ? p.imageAsset
+                : ProfileModel.defaultCatalogAsset(id, p.name);
+            _profiles.insert(0, p.copyWith(imageAsset: effectiveImageAsset));
           }
           changed = true;
         }

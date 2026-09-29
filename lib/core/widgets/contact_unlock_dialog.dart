@@ -170,9 +170,9 @@ class _ContactUnlockDialogState extends State<ContactUnlockDialog> {
                       width: 44,
                       height: 44,
                       color: const Color(0xFFF9F0E6),
-                      child: (profile.imageAsset != null && profile.imageAsset!.isNotEmpty)
+                      child: (profile.displayImageAsset != null && profile.displayImageAsset!.isNotEmpty)
                           ? Image.asset(
-                              profile.imageAsset!,
+                              profile.displayImageAsset!,
                               width: 44,
                               height: 44,
                               fit: BoxFit.cover,

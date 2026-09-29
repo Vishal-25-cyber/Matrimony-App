@@ -730,6 +730,39 @@ void main() {
       final login10 = await auth.login("6381180499", "password123");
       expect(login10.success, isTrue);
     });
+
+    test('Soundarya R. and catalog candidates preserve photo asset on serialization and Atlas sync', () async {
+      // 1. Check Soundarya R. profile has default catalog imageAsset
+      final soundarya = ProfileModel.fromMap({
+        'id': 'PM-1001',
+        'name': 'Soundarya R.',
+        'gender': 'Bride',
+      });
+      expect(soundarya.displayImageAsset, 'assets/images/bride_soundarya.jpg');
+
+      // 2. toMap serializes imageAsset
+      final map = soundarya.toMap();
+      expect(map['imageAsset'], 'assets/images/bride_soundarya.jpg');
+
+      // 3. fromMap deserializes imageAsset even if map imageAsset was missing from Atlas document
+      final fromAtlasWithoutAsset = ProfileModel.fromMap({
+        'id': 'PM-1001',
+        'name': 'Soundarya R.',
+        'gender': 'Bride',
+      });
+      expect(fromAtlasWithoutAsset.imageAsset, 'assets/images/bride_soundarya.jpg');
+      expect(fromAtlasWithoutAsset.displayImageAsset, 'assets/images/bride_soundarya.jpg');
+
+      // 4. Other catalog profiles also resolve correctly
+      final kavitha = ProfileModel.fromMap({'id': 'PM-1002', 'name': 'Kavitha M.'});
+      expect(kavitha.displayImageAsset, 'assets/images/doctor_kavitha.jpg');
+
+      final sneha = ProfileModel.fromMap({'id': 'PM-1003', 'name': 'Sneha P.'});
+      expect(sneha.displayImageAsset, 'assets/images/bride_sneha.jpg');
+
+      final karthik = ProfileModel.fromMap({'id': 'PM-1006', 'name': 'Vignesh S.'});
+      expect(karthik.displayImageAsset, 'assets/images/user_karthik.jpg');
+    });
   });
 }
 

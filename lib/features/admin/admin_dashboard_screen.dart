@@ -1625,9 +1625,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
               width: 48,
               height: 48,
               color: const Color(0xFFF9F0E6),
-              child: (p.imageAsset != null && p.imageAsset!.isNotEmpty)
+              child: (p.displayImageAsset != null && p.displayImageAsset!.isNotEmpty)
                   ? Image.asset(
-                      p.imageAsset!,
+                      p.displayImageAsset!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Icon(
                         p.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,

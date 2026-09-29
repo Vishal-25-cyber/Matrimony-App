@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/profile_model.dart';
 import '../../services/mock_data_service.dart';
+import '../../services/cloudflare_r2_service.dart';
 import '../../core/widgets/big_horoscope_charts_dialog.dart';
 import '../../core/widgets/drawn_horoscope_chart_widget.dart';
 import '../../core/utils/horoscope_download_helper.dart';
@@ -149,13 +150,7 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
                               color: const Color(0xFFF9F0E6),
                             ),
                             clipBehavior: Clip.antiAlias,
-                            child: (profile.imageAsset != null && profile.imageAsset!.isNotEmpty)
-                                ? Image.asset(
-                                    profile.imageAsset!,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, _, _) => _buildNoPhotoPlaceholder(profile),
-                                  )
-                                : _buildNoPhotoPlaceholder(profile),
+                            child: _buildProfilePhoto(profile),
                           ),
                           // Heart button floating on photo
                           Positioned(
@@ -812,6 +807,41 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
 
   Widget _buildDivider() {
     return const Divider(height: 1, color: Color(0xFFF0E5DB));
+  }
+
+  Widget _buildProfilePhoto(ProfileModel profile) {
+    if (profile.profileImageUrl != null && profile.profileImageUrl!.trim().isNotEmpty) {
+      final safeUrl = CloudflareR2Service().ensureDisplayableUrl(profile.profileImageUrl!);
+      return Image.network(
+        safeUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildLocalOrFallbackPhoto(profile),
+      );
+    }
+    return _buildLocalOrFallbackPhoto(profile);
+  }
+
+  Widget _buildLocalOrFallbackPhoto(ProfileModel profile) {
+    if (profile.imageBytes != null && profile.imageBytes!.isNotEmpty) {
+      return Image.memory(
+        profile.imageBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildAssetOrPlaceholder(profile),
+      );
+    }
+    return _buildAssetOrPlaceholder(profile);
+  }
+
+  Widget _buildAssetOrPlaceholder(ProfileModel profile) {
+    final assetPath = profile.displayImageAsset;
+    if (assetPath != null && assetPath.isNotEmpty) {
+      return Image.asset(
+        assetPath,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildNoPhotoPlaceholder(profile),
+      );
+    }
+    return _buildNoPhotoPlaceholder(profile);
   }
 
   Widget _buildNoPhotoPlaceholder(ProfileModel p) {

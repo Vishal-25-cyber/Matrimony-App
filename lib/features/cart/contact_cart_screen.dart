@@ -1409,10 +1409,10 @@ class _ContactCartScreenState extends State<ContactCartScreen>
                     border: Border.all(color: const Color(0xFFD4AF37), width: 1),
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: (profile.imageAsset != null &&
-                          profile.imageAsset!.isNotEmpty)
+                  child: (profile.displayImageAsset != null &&
+                          profile.displayImageAsset!.isNotEmpty)
                       ? Image.asset(
-                          profile.imageAsset!,
+                          profile.displayImageAsset!,
                           fit: BoxFit.cover,
                           errorBuilder: (_, _, _) => Icon(
                             profile.gender.toLowerCase() == 'bride'
@@ -1826,10 +1826,10 @@ class _ContactCartScreenState extends State<ContactCartScreen>
                 border: Border.all(color: const Color(0xFFD4AF37), width: 1),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: (profile.imageAsset != null &&
-                      profile.imageAsset!.isNotEmpty)
+              child: (profile.displayImageAsset != null &&
+                      profile.displayImageAsset!.isNotEmpty)
                   ? Image.asset(
-                      profile.imageAsset!,
+                      profile.displayImageAsset!,
                       fit: BoxFit.cover,
                       errorBuilder: (_, _, _) => Icon(
                         profile.gender.toLowerCase() == 'bride'

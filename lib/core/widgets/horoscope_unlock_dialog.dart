@@ -184,9 +184,9 @@ class _HoroscopeUnlockDialogState extends State<HoroscopeUnlockDialog> {
                       width: 50,
                       height: 50,
                       color: const Color(0xFFF9F0E6),
-                      child: (profile.imageAsset != null && profile.imageAsset!.isNotEmpty)
+                      child: (profile.displayImageAsset != null && profile.displayImageAsset!.isNotEmpty)
                           ? Image.asset(
-                              profile.imageAsset!,
+                              profile.displayImageAsset!,
                               width: 50,
                               height: 50,
                               fit: BoxFit.cover,

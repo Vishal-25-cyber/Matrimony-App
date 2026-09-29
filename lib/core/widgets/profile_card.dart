@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/profile_model.dart';
 import '../../services/mock_data_service.dart';
+import '../../services/cloudflare_r2_service.dart';
 import '../../features/main_navigation_screen.dart';
 
 class ProfileCard extends StatelessWidget {
@@ -282,7 +283,6 @@ class ProfileCard extends StatelessWidget {
   }
 
   Widget _buildCandidatePhoto() {
-    final hasImage = profile.imageAsset != null && profile.imageAsset!.isNotEmpty;
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -305,13 +305,7 @@ class ProfileCard extends StatelessWidget {
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(10.5),
-            child: hasImage
-                ? Image.asset(
-                    profile.imageAsset!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) => _buildFallbackAvatar(74, 92),
-                  )
-                : _buildFallbackAvatar(74, 92),
+            child: _buildPhotoContent(),
           ),
         ),
         if (profile.isOnline)
@@ -347,6 +341,41 @@ class ProfileCard extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  Widget _buildPhotoContent() {
+    if (profile.profileImageUrl != null && profile.profileImageUrl!.trim().isNotEmpty) {
+      final safeUrl = CloudflareR2Service().ensureDisplayableUrl(profile.profileImageUrl!);
+      return Image.network(
+        safeUrl,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildLocalOrFallbackAvatar(),
+      );
+    }
+    return _buildLocalOrFallbackAvatar();
+  }
+
+  Widget _buildLocalOrFallbackAvatar() {
+    if (profile.imageBytes != null && profile.imageBytes!.isNotEmpty) {
+      return Image.memory(
+        profile.imageBytes!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildAssetOrFallbackAvatar(),
+      );
+    }
+    return _buildAssetOrFallbackAvatar();
+  }
+
+  Widget _buildAssetOrFallbackAvatar() {
+    final asset = profile.displayImageAsset;
+    if (asset != null && asset.isNotEmpty) {
+      return Image.asset(
+        asset,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _buildFallbackAvatar(74, 92),
+      );
+    }
+    return _buildFallbackAvatar(74, 92);
   }
 
   Widget _buildFallbackAvatar(double w, double h) {
