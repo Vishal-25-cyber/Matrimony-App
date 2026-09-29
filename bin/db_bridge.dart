@@ -5,12 +5,54 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:mongo_dart/mongo_dart.dart';
 
-const String r2AccessKeyId = "16fa39f1d2e94ee5405a9995244691f0";
-const String r2SecretAccessKey = "06dfc88dcbf86cb0174233ab6670274da20d30de78383b87d2c3d08a736e1bd3";
-const String r2Endpoint = "https://b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com";
-const String r2BucketName = "matrimony-profile-images";
-const String r2Host = "b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com";
+// ==============================================================================
+// 1. DYNAMIC ENVIRONMENT CONFIGURATION (.env & Platform.environment)
+// ==============================================================================
+Map<String, String> loadEnvFile([String path = '.env']) {
+  final env = <String, String>{};
+  final file = File(path);
+  if (file.existsSync()) {
+    try {
+      final lines = file.readAsLinesSync();
+      for (var line in lines) {
+        line = line.trim();
+        if (line.isEmpty || line.startsWith('#')) continue;
+        final eqIdx = line.indexOf('=');
+        if (eqIdx != -1) {
+          final key = line.substring(0, eqIdx).trim();
+          var val = line.substring(eqIdx + 1).trim();
+          if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+            val = val.substring(1, val.length - 1);
+          }
+          env[key] = val;
+        }
+      }
+    } catch (e) {
+      print("ℹ [Bridge] Notice reading $path: $e");
+    }
+  }
+  return env;
+}
+
+final Map<String, String> _env = loadEnvFile('.env');
+String getEnv(String key, [String defaultValue = '']) {
+  return Platform.environment[key] ?? _env[key] ?? defaultValue;
+}
+
+// Cloudflare R2 Credentials & Parameters loaded strictly on server-side
+final String r2AccountId = getEnv('CLOUDFLARE_R2_ACCOUNT_ID', 'b535b7c908a09f10d27773b1b9536777');
+final String r2AccessKeyId = getEnv('CLOUDFLARE_R2_ACCESS_KEY_ID', '16fa39f1d2e94ee5405a9995244691f0');
+final String r2SecretAccessKey = getEnv('CLOUDFLARE_R2_SECRET_ACCESS_KEY', '06dfc88dcbf86cb0174233ab6670274da20d30de78383b87d2c3d08a736e1bd3');
+final String r2BucketName = getEnv('CLOUDFLARE_R2_BUCKET_NAME', 'matrimony-profile-images');
+final String r2Prefix = getEnv('CLOUDFLARE_R2_PREFIX', 'profiles/');
+final String r2Endpoint = getEnv('CLOUDFLARE_R2_ENDPOINT', 'https://$r2AccountId.r2.cloudflarestorage.com');
+final String r2PublicUrlPrefix = getEnv('CLOUDFLARE_R2_PUBLIC_URL_PREFIX', '');
+final String r2Host = Uri.parse(r2Endpoint).host;
 const String r2Region = "auto";
+final String mongoAtlasUri = getEnv(
+  'MONGODB_ATLAS_URI',
+  'mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true',
+);
 
 // In-memory image cache for instant, zero-latency avatar rendering in Flutter Web
 final Map<String, List<int>> _imageCache = {};
@@ -21,6 +63,151 @@ final Map<String, Map<String, dynamic>> _profileDocCache = {};
 final Map<String, Map<String, dynamic>> _shortlistDocCache = {};
 final Map<String, List<Map<String, dynamic>>> _paymentsDocCache = {};
 
+// ==============================================================================
+// 2. IMAGE VALIDATION (MAGIC BYTES & SIZE LIMIT)
+// ==============================================================================
+class ImageValidationResult {
+  final bool isValid;
+  final String contentType;
+  final String extension;
+  final String? error;
+
+  ImageValidationResult.valid({required this.contentType, required this.extension})
+      : isValid = true,
+        error = null;
+
+  ImageValidationResult.invalid(this.error)
+      : isValid = false,
+        contentType = '',
+        extension = '';
+}
+
+ImageValidationResult validateImageBytes(List<int> bytes) {
+  const maxBytes = 5 * 1024 * 1024; // 5 MB max
+  if (bytes.isEmpty) {
+    return ImageValidationResult.invalid("No image data received / empty file");
+  }
+  if (bytes.length > maxBytes) {
+    final sizeMb = (bytes.length / (1024 * 1024)).toStringAsFixed(2);
+    return ImageValidationResult.invalid("Image file size exceeds 5MB limit ($sizeMb MB)");
+  }
+  if (bytes.length < 12) {
+    return ImageValidationResult.invalid("File is too small to be a valid image");
+  }
+
+  // 1. JPEG: FF D8 FF
+  if (bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) {
+    return ImageValidationResult.valid(contentType: 'image/jpeg', extension: 'jpg');
+  }
+
+  // 2. PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+    return ImageValidationResult.valid(contentType: 'image/png', extension: 'png');
+  }
+
+  // 3. WebP: 52 49 46 46 (RIFF) ... 57 45 42 50 (WEBP)
+  if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+      bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
+    return ImageValidationResult.valid(contentType: 'image/webp', extension: 'webp');
+  }
+
+  return ImageValidationResult.invalid("Unsupported image format. Allowed formats: JPG, JPEG, PNG, and WebP.");
+}
+
+// ==============================================================================
+// 3. MULTIPART / FORM-DATA PARSER
+// ==============================================================================
+class MultipartParsedResult {
+  final Map<String, String> fields;
+  final List<MultipartFileEntry> files;
+  MultipartParsedResult({required this.fields, required this.files});
+}
+
+class MultipartFileEntry {
+  final String fieldName;
+  final String fileName;
+  final String contentType;
+  final List<int> bytes;
+  MultipartFileEntry({required this.fieldName, required this.fileName, required this.contentType, required this.bytes});
+}
+
+MultipartParsedResult parseMultipartData(List<int> bodyBytes, String boundary) {
+  final fields = <String, String>{};
+  final files = <MultipartFileEntry>[];
+  final boundaryBytes = utf8.encode("--$boundary");
+  final doubleNewline = [13, 10, 13, 10]; // \r\n\r\n
+  final singleNewline = [10, 10]; // \n\n
+
+  int search(List<int> src, List<int> pattern, int start) {
+    for (int i = start; i <= src.length - pattern.length; i++) {
+      bool match = true;
+      for (int j = 0; j < pattern.length; j++) {
+        if (src[i + j] != pattern[j]) { match = false; break; }
+      }
+      if (match) return i;
+    }
+    return -1;
+  }
+
+  int pos = search(bodyBytes, boundaryBytes, 0);
+  while (pos != -1) {
+    pos += boundaryBytes.length;
+    if (pos >= bodyBytes.length - 2) break;
+    // Check if end of multipart (starts with --)
+    if (bodyBytes[pos] == 45 && bodyBytes[pos + 1] == 45) break;
+    // Skip \r\n
+    if (bodyBytes[pos] == 13 && bodyBytes[pos + 1] == 10) {
+      pos += 2;
+    } else if (bodyBytes[pos] == 10) {
+      pos += 1;
+    }
+
+    final nextBoundary = search(bodyBytes, boundaryBytes, pos);
+    if (nextBoundary == -1) break;
+
+    int headerEnd = search(bodyBytes, doubleNewline, pos);
+    int bodyStart = 0;
+    if (headerEnd != -1 && headerEnd < nextBoundary) {
+      bodyStart = headerEnd + 4;
+    } else {
+      headerEnd = search(bodyBytes, singleNewline, pos);
+      if (headerEnd != -1 && headerEnd < nextBoundary) {
+        bodyStart = headerEnd + 2;
+      }
+    }
+
+    if (bodyStart > 0 && bodyStart <= nextBoundary) {
+      final headerStr = utf8.decode(bodyBytes.sublist(pos, headerEnd), allowMalformed: true);
+      var partEnd = nextBoundary;
+      if (partEnd >= 2 && bodyBytes[partEnd - 2] == 13 && bodyBytes[partEnd - 1] == 10) {
+        partEnd -= 2;
+      } else if (partEnd >= 1 && bodyBytes[partEnd - 1] == 10) {
+        partEnd -= 1;
+      }
+      final partBytes = bodyBytes.sublist(bodyStart, partEnd);
+
+      final dispositionMatch = RegExp(r'name="([^"]+)"').firstMatch(headerStr);
+      final filenameMatch = RegExp(r'filename="([^"]+)"').firstMatch(headerStr);
+      final contentTypeMatch = RegExp(r'Content-Type:\s*([^\r\n;]+)', caseSensitive: false).firstMatch(headerStr);
+
+      final name = dispositionMatch?.group(1) ?? '';
+      final filename = filenameMatch?.group(1);
+      final cType = contentTypeMatch?.group(1)?.trim() ?? 'application/octet-stream';
+
+      if (filename != null && filename.isNotEmpty) {
+        files.add(MultipartFileEntry(fieldName: name, fileName: filename, contentType: cType, bytes: partBytes));
+      } else if (name.isNotEmpty) {
+        fields[name] = utf8.decode(partBytes, allowMalformed: true).trim();
+      }
+    }
+    pos = nextBoundary;
+  }
+  return MultipartParsedResult(fields: fields, files: files);
+}
+
+// ==============================================================================
+// 4. CLOUDFLARE R2 S3-COMPATIBLE API (AWS SIGV4)
+// ==============================================================================
 Future<bool> uploadToR2(String objectKey, List<int> imageBytes, String contentType) async {
   final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
   final now = DateTime.now().toUtc();
@@ -63,14 +250,61 @@ Future<bool> uploadToR2(String objectKey, List<int> imageBytes, String contentTy
 
     if (response.statusCode == 200 || response.statusCode == 204) {
       _imageCache[cleanKey] = imageBytes;
-      print("✓ [Bridge] Successfully uploaded to Cloudflare R2: $cleanKey (${imageBytes.length} bytes)");
+      print("✓ [Bridge] Uploaded to Cloudflare R2: $cleanKey (${imageBytes.length} bytes)");
       return true;
     } else {
-      print("⚠ [Bridge] R2 upload failed status: ${response.statusCode}, body: ${response.body}");
+      print("⚠ [Bridge] R2 upload failed HTTP ${response.statusCode}");
       return false;
     }
   } catch (e) {
     print("⚠ [Bridge] R2 upload error: $e");
+    return false;
+  }
+}
+
+Future<bool> deleteFromR2(String objectKey) async {
+  final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+  final now = DateTime.now().toUtc();
+  final dateStamp = "${now.year.toString().padLeft(4, '0')}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}";
+  final amzDate = "${dateStamp}T${now.hour.toString().padLeft(2, '0')}${now.minute.toString().padLeft(2, '0')}${now.second.toString().padLeft(2, '0')}Z";
+
+  final payloadHash = sha256.convert([]).toString();
+  final canonicalUri = "/$r2BucketName/$cleanKey";
+  const canonicalQueryString = "";
+  final canonicalHeaders = "host:$r2Host\nx-amz-content-sha256:$payloadHash\nx-amz-date:$amzDate\n";
+  const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
+  final canonicalRequest = "DELETE\n$canonicalUri\n$canonicalQueryString\n$canonicalHeaders\n$signedHeaders\n$payloadHash";
+
+  const algorithm = "AWS4-HMAC-SHA256";
+  final credentialScope = "$dateStamp/$r2Region/s3/aws4_request";
+  final stringToSign = "$algorithm\n$amzDate\n$credentialScope\n${sha256.convert(utf8.encode(canonicalRequest))}";
+
+  List<int> sign(List<int> key, String msg) => Hmac(sha256, key).convert(utf8.encode(msg)).bytes;
+  final kDate = sign(utf8.encode("AWS4$r2SecretAccessKey"), dateStamp);
+  final kRegion = sign(kDate, r2Region);
+  final kService = sign(kRegion, "s3");
+  final signingKey = sign(kService, "aws4_request");
+  final signature = Hmac(sha256, signingKey).convert(utf8.encode(stringToSign)).toString();
+
+  final authorizationHeader = "$algorithm Credential=$r2AccessKeyId/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature";
+
+  final uri = Uri.parse("$r2Endpoint/$r2BucketName/$cleanKey");
+  try {
+    final response = await http.delete(
+      uri,
+      headers: {
+        'Host': r2Host,
+        'x-amz-date': amzDate,
+        'x-amz-content-sha256': payloadHash,
+        'Authorization': authorizationHeader,
+      },
+    ).timeout(const Duration(seconds: 15));
+
+    _imageCache.remove(cleanKey);
+    print("✓ [Bridge] Deleted from Cloudflare R2: $cleanKey (HTTP ${response.statusCode})");
+    return response.statusCode == 200 || response.statusCode == 204;
+  } catch (e) {
+    print("⚠ [Bridge] R2 delete error for $cleanKey: $e");
     return false;
   }
 }
@@ -113,11 +347,13 @@ String generateR2PresignedUrl(String objectKey, {int expiresInSeconds = 604800})
   return "$r2Endpoint/$r2BucketName/$cleanKey?$canonicalQueryString&X-Amz-Signature=$signature";
 }
 
+// ==============================================================================
+// 5. SERVER ENTRYPOINT & HTTP ROUTING
+// ==============================================================================
 void main() async {
-  const uri = "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true";
   const port = 8765;
 
-  print("Starting MongoDB Atlas HTTP Web Bridge on port $port...");
+  print("Starting Secure Cloudflare R2 & MongoDB Atlas HTTP API on port $port...");
   Db? db;
   bool isConnecting = false;
 
@@ -139,12 +375,12 @@ void main() async {
           await db!.close().timeout(const Duration(seconds: 2));
         } catch (_) {}
       }
-      db = await Db.create(uri);
+      db = await Db.create(mongoAtlasUri);
       await db!.open().timeout(const Duration(seconds: 8));
-      print("✓ Bridge connected to MongoDB Atlas!");
+      print("✓ Connected to MongoDB Atlas!");
       return db;
     } catch (e) {
-      print("Bridge connection error: $e");
+      print("⚠ MongoDB connection notice: $e");
       return null;
     } finally {
       isConnecting = false;
@@ -155,14 +391,13 @@ void main() async {
   getDb().ignore();
 
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-  print("✓ MongoDB Atlas Bridge listening at http://127.0.0.1:$port");
+  print("✓ Backend API listening at http://127.0.0.1:$port");
 
-  // Non-blocking concurrent request listener
   server.listen((HttpRequest request) async {
     // Add CORS headers for Flutter Web
     request.response.headers.add('Access-Control-Allow-Origin', '*');
     request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
-    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Origin, Accept, Authorization');
+    request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Origin, Accept, Authorization, X-User-Id');
 
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.ok;
@@ -179,30 +414,240 @@ void main() async {
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
         'status': 'ok',
-        'cluster': 'portfolio.mo5wnyq.mongodb.net',
+        'r2Configured': r2AccessKeyId.isNotEmpty && r2SecretAccessKey.isNotEmpty,
+        'r2Bucket': r2BucketName,
         'dbConnected': isDbUp,
       }));
       await request.response.close();
       return;
     }
 
-    // Cloudflare R2 Image Fetch / Proxy Endpoint with CORS for Web
-    if (path == '/api/r2-image' && (request.method == 'GET' || request.method == 'HEAD')) {
+    // -------------------------------------------------------------
+    // PROFILE IMAGE UPLOAD (POST /api/profile/upload-image & /api/r2-upload)
+    // -------------------------------------------------------------
+    if ((path == '/api/profile/upload-image' || path == '/api/r2-upload') && request.method == 'POST') {
       try {
-        final objectKey = request.uri.queryParameters['key'] ?? '';
-        if (objectKey.isEmpty) {
-          request.response.statusCode = HttpStatus.badRequest;
-          request.response.write(jsonEncode({'error': 'key query parameter is required'}));
+        final cTypeHeader = request.headers.contentType?.mimeType.toLowerCase() ?? '';
+        final authHeader = request.headers.value('authorization') ?? '';
+        final xUserIdHeader = request.headers.value('x-user-id') ?? '';
+        final queryUserId = request.uri.queryParameters['userId'] ?? '';
+
+        String userId = '';
+        if (xUserIdHeader.isNotEmpty) {
+          userId = xUserIdHeader;
+        } else if (authHeader.isNotEmpty) {
+          userId = authHeader.replaceFirst(RegExp(r'^[Bb]earer\s+'), '').trim();
+        } else if (queryUserId.isNotEmpty) {
+          userId = queryUserId;
+        }
+
+        List<int> imageBytes = [];
+        String oldKey = '';
+
+        if (cTypeHeader.contains('multipart/form-data')) {
+          final boundary = request.headers.contentType?.parameters['boundary'] ?? '';
+          final rawBody = await request.fold<List<int>>([], (prev, element) => prev..addAll(element));
+          final parsed = parseMultipartData(rawBody, boundary);
+          if (parsed.fields.containsKey('userId') && userId.isEmpty) {
+            userId = parsed.fields['userId']!;
+          }
+          if (parsed.fields.containsKey('oldKey')) {
+            oldKey = parsed.fields['oldKey']!;
+          }
+          if (parsed.files.isNotEmpty) {
+            imageBytes = parsed.files.first.bytes;
+          }
+        } else if (cTypeHeader.contains('application/json')) {
+          final bodyStr = await utf8.decoder.bind(request).join();
+          final data = jsonDecode(bodyStr) as Map<String, dynamic>;
+          if (userId.isEmpty && data['userId'] != null) {
+            userId = data['userId'].toString();
+          }
+          oldKey = data['oldKey']?.toString() ?? data['oldImageUrl']?.toString() ?? '';
+          final base64Str = data['imageBase64']?.toString() ?? data['image']?.toString() ?? '';
+          if (base64Str.isNotEmpty) {
+            imageBytes = base64Decode(base64Str);
+          }
+        } else {
+          imageBytes = await request.fold<List<int>>([], (prev, element) => prev..addAll(element));
+        }
+
+        if (userId.trim().isEmpty) {
+          request.response.statusCode = HttpStatus.unauthorized;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'Authentication required. Missing userId or Authorization header.'}));
           await request.response.close();
           return;
         }
 
-        final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
-        final mime = cleanKey.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-        request.response.headers.contentType = ContentType.parse(mime);
-        request.response.headers.add('Cache-Control', 'public, max-age=31536000, immutable');
+        final validation = validateImageBytes(imageBytes);
+        if (!validation.isValid) {
+          request.response.statusCode = imageBytes.length > 5 * 1024 * 1024
+              ? HttpStatus.requestEntityTooLarge
+              : HttpStatus.badRequest;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': validation.error}));
+          await request.response.close();
+          return;
+        }
 
-        // Check in-memory cache first (0ms response)
+        // Generate deterministic, safe unique object key: profiles/<user_id>_avatar.<ext>
+        final cleanUserId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+        final objectKey = "$r2Prefix${cleanUserId}_avatar.${validation.extension}";
+
+        // Cleanup previous photo if different extension
+        var activeDb = await getDb();
+        if (activeDb != null && oldKey.isEmpty) {
+          try {
+            final existingUser = await activeDb.collection('users').findOne(
+              where.eq('phone', userId).or(where.eq('username', userId)).or(where.eq('phone', cleanUserId)),
+            );
+            oldKey = existingUser?['profileImageKey']?.toString() ?? '';
+          } catch (_) {}
+        }
+        if (oldKey.isNotEmpty && oldKey != objectKey) {
+          final cleanOldKey = oldKey.contains(r2BucketName)
+              ? oldKey.substring(oldKey.indexOf(r2BucketName) + r2BucketName.length + 1)
+              : oldKey;
+          deleteFromR2(cleanOldKey).ignore();
+        }
+
+        final uploadSuccess = await uploadToR2(objectKey, imageBytes, validation.contentType);
+        if (!uploadSuccess) {
+          request.response.statusCode = HttpStatus.badGateway;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'Failed to upload image to Cloudflare R2'}));
+          await request.response.close();
+          return;
+        }
+
+        final presignedUrl = generateR2PresignedUrl(objectKey);
+        final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+        _imageCache[cleanKey] = imageBytes;
+
+        // Store metadata ONLY in MongoDB Atlas - NO raw binary data
+        if (activeDb != null) {
+          try {
+            final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
+            final updateDoc = {
+              'profileImageKey': objectKey,
+              'profileImageUrl': presignedUrl,
+              'r2ProfileImageUrl': presignedUrl,
+              'hasCustomImage': true,
+              'updatedAt': DateTime.now().toIso8601String(),
+            };
+            await activeDb.collection('users').update(
+              where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
+              {r'$set': updateDoc},
+            );
+            await activeDb.collection('profiles').update(
+              where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+              {r'$set': updateDoc},
+            );
+            print("✓ [Bridge] Photo metadata updated in Atlas for user: $userId (Key: $objectKey)");
+          } catch (e) {
+            print("⚠ [Bridge] MongoDB metadata sync notice: $e");
+          }
+        }
+
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({
+          'success': true,
+          'objectKey': objectKey,
+          'profileImageKey': objectKey,
+          'url': presignedUrl,
+          'contentType': validation.contentType,
+          'sizeBytes': imageBytes.length,
+          'updatedAt': DateTime.now().toIso8601String(),
+        }));
+        await request.response.close();
+        return;
+      } catch (e) {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'error': e.toString()}));
+        await request.response.close();
+        return;
+      }
+    }
+
+    // -------------------------------------------------------------
+    // PROFILE IMAGE RETRIEVAL (GET /api/profile/image/:userId & /api/r2-image)
+    // -------------------------------------------------------------
+    final isProfileImageGet = (path.startsWith('/api/profile/image') || path == '/api/r2-image') &&
+        (request.method == 'GET' || request.method == 'HEAD');
+    if (isProfileImageGet) {
+      try {
+        String key = request.uri.queryParameters['key'] ?? '';
+        String userId = request.uri.queryParameters['userId'] ?? '';
+
+        if (key.isEmpty && path.startsWith('/api/profile/image/')) {
+          final segment = path.replaceFirst('/api/profile/image/', '').trim();
+          if (segment.isNotEmpty) userId = segment;
+        }
+
+        if (key.isEmpty && userId.isNotEmpty) {
+          final cleanId = userId.replaceAll(RegExp(r'\D'), '');
+          final cachedUser = _userDocCache[cleanId] ?? _userDocCache[userId];
+          key = cachedUser?['profileImageKey']?.toString() ?? '';
+
+          if (key.isEmpty) {
+            var activeDb = await getDb();
+            if (activeDb != null) {
+              final userDoc = await activeDb.collection('users').findOne(
+                where.eq('phone', userId).or(where.eq('phone', cleanId)).or(where.eq('username', userId)),
+              );
+              key = userDoc?['profileImageKey']?.toString() ?? '';
+              if (key.isEmpty) {
+                final profDoc = await activeDb.collection('profiles').findOne(
+                  where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanId)),
+                );
+                key = profDoc?['profileImageKey']?.toString() ?? '';
+              }
+            }
+          }
+
+          if (key.isEmpty) {
+            key = "$r2Prefix${userId.toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_avatar.jpg";
+          }
+        }
+
+        if (key.isEmpty) {
+          request.response.statusCode = HttpStatus.badRequest;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'userId or key parameter is required'}));
+          await request.response.close();
+          return;
+        }
+
+        final cleanKey = key.startsWith('/') ? key.substring(1) : key;
+        final presignedUrl = generateR2PresignedUrl(cleanKey, expiresInSeconds: 604800);
+
+        final acceptsJson = (request.headers.value('accept') ?? '').contains('application/json') ||
+            request.uri.queryParameters['json'] == 'true';
+        if (acceptsJson) {
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({
+            'success': true,
+            'userId': userId,
+            'objectKey': cleanKey,
+            'profileImageKey': cleanKey,
+            'url': presignedUrl,
+            'expiresIn': 604800,
+          }));
+          await request.response.close();
+          return;
+        }
+
+        // Direct streaming with CORS headers for Image.network & browsers
+        final mime = cleanKey.toLowerCase().endsWith('.png')
+            ? 'image/png'
+            : (cleanKey.toLowerCase().endsWith('.webp') ? 'image/webp' : 'image/jpeg');
+        request.response.headers.contentType = ContentType.parse(mime);
+        request.response.headers.add('Cache-Control', 'public, max-age=86400, immutable');
+
         if (_imageCache.containsKey(cleanKey)) {
           final bytes = _imageCache[cleanKey]!;
           request.response.headers.contentLength = bytes.length;
@@ -214,9 +659,7 @@ void main() async {
           return;
         }
 
-        final presignedUrl = generateR2PresignedUrl(cleanKey, expiresInSeconds: 3600);
         final r2Res = await http.get(Uri.parse(presignedUrl)).timeout(const Duration(seconds: 10));
-
         if (r2Res.statusCode == 200) {
           _imageCache[cleanKey] = r2Res.bodyBytes;
           request.response.headers.contentLength = r2Res.bodyBytes.length;
@@ -226,98 +669,121 @@ void main() async {
           }
         } else {
           request.response.statusCode = r2Res.statusCode;
-          request.response.write(jsonEncode({'error': 'Image not found in R2'}));
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'Image not found in Cloudflare R2'}));
         }
       } catch (e) {
         request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'error': e.toString()}));
       }
       await request.response.close();
       return;
     }
 
-    // Cloudflare R2 Image Upload Endpoint
-    if (path == '/api/r2-upload' && request.method == 'POST') {
+    // -------------------------------------------------------------
+    // PROFILE IMAGE DELETION (DELETE /api/profile/image)
+    // -------------------------------------------------------------
+    final isProfileImageDelete = (path == '/api/profile/image' || path.startsWith('/api/profile/image/')) &&
+        (request.method == 'DELETE' || request.method == 'POST');
+    if (isProfileImageDelete && (request.method == 'DELETE' || request.uri.queryParameters['action'] == 'delete')) {
       try {
-        final bodyStr = await utf8.decoder.bind(request).join();
-        final data = jsonDecode(bodyStr) as Map<String, dynamic>;
-        final objectKey = data['objectKey']?.toString() ?? '';
-        final base64Image = data['imageBase64']?.toString() ?? '';
-        final contentType = data['contentType']?.toString() ?? 'image/jpeg';
+        String userId = request.uri.queryParameters['userId'] ?? '';
+        String key = request.uri.queryParameters['key'] ?? '';
 
-        if (objectKey.isEmpty || base64Image.isEmpty) {
+        if (userId.isEmpty && path.startsWith('/api/profile/image/')) {
+          final segment = path.replaceFirst('/api/profile/image/', '').trim();
+          if (segment.isNotEmpty) userId = segment;
+        }
+
+        if (userId.isEmpty) {
+          try {
+            final bodyStr = await utf8.decoder.bind(request).join();
+            if (bodyStr.isNotEmpty) {
+              final data = jsonDecode(bodyStr) as Map<String, dynamic>;
+              userId = data['userId']?.toString() ?? '';
+              key = data['key']?.toString() ?? '';
+            }
+          } catch (_) {}
+        }
+
+        if (userId.isEmpty && key.isEmpty) {
           request.response.statusCode = HttpStatus.badRequest;
-          request.response.write(jsonEncode({'error': 'objectKey and imageBase64 are required'}));
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'error': 'userId or key parameter is required'}));
           await request.response.close();
           return;
         }
 
-        final imageBytes = base64Decode(base64Image);
-        final uploadSuccess = await uploadToR2(objectKey, imageBytes, contentType);
-
-        if (uploadSuccess) {
-          final presignedUrl = generateR2PresignedUrl(objectKey);
-          final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
-          _imageCache[cleanKey] = imageBytes;
-
-          // Asynchronously sync new photo URL to MongoDB Atlas users & profiles
-          final userId = data['userId']?.toString() ?? '';
-          if (userId.isNotEmpty) {
-            getDb().then((activeDb) async {
-              if (activeDb == null) return;
-              try {
-                final cleanId = userId.replaceAll(RegExp(r'\D'), '');
-                final updateFields = {
-                  'profileImageUrl': presignedUrl,
-                  'r2ProfileImageUrl': presignedUrl,
-                  'hasCustomImage': true,
-                  'updatedAt': DateTime.now().toIso8601String(),
-                };
-                await activeDb.collection('users').update(
-                  where.eq('phone', userId).or(where.eq('phone', cleanId)).or(where.eq('username', userId)),
-                  {r'$set': updateFields},
-                );
-                await activeDb.collection('profiles').update(
-                  where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanId)),
-                  {r'$set': updateFields},
-                );
-                print("✓ [Bridge] Photo URL synced to Atlas user and profile: $userId");
-              } catch (e) {
-                print("⚠ [Bridge] Background photo sync error: $e");
-              }
-            }).ignore();
+        var activeDb = await getDb();
+        if (key.isEmpty && activeDb != null) {
+          final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
+          final uDoc = await activeDb.collection('users').findOne(
+            where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
+          );
+          key = uDoc?['profileImageKey']?.toString() ?? '';
+          if (key.isEmpty) {
+            final pDoc = await activeDb.collection('profiles').findOne(
+              where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+            );
+            key = pDoc?['profileImageKey']?.toString() ?? '';
           }
-
-          request.response.statusCode = HttpStatus.ok;
-          request.response.write(jsonEncode({
-            'success': true,
-            'objectKey': objectKey,
-            'url': presignedUrl,
-          }));
-        } else {
-          request.response.statusCode = HttpStatus.internalServerError;
-          request.response.write(jsonEncode({'error': 'Failed to upload to Cloudflare R2'}));
         }
+
+        if (key.isNotEmpty) {
+          final cleanKey = key.startsWith('/') ? key.substring(1) : key;
+          await deleteFromR2(cleanKey);
+          _imageCache.remove(cleanKey);
+        }
+
+        if (activeDb != null && userId.isNotEmpty) {
+          final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
+          final clearFields = {
+            'profileImageKey': null,
+            'profileImageUrl': null,
+            'r2ProfileImageUrl': null,
+            'hasCustomImage': false,
+            'updatedAt': DateTime.now().toIso8601String(),
+          };
+          await activeDb.collection('users').update(
+            where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
+            {r'$set': clearFields},
+          );
+          await activeDb.collection('profiles').update(
+            where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+            {r'$set': clearFields},
+          );
+          print("✓ [Bridge] Photo metadata cleared from Atlas for user: $userId");
+        }
+
+        request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
+        request.response.write(jsonEncode({'success': true, 'message': 'Profile image deleted successfully'}));
+        await request.response.close();
+        return;
       } catch (e) {
         request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'error': e.toString()}));
+        await request.response.close();
+        return;
       }
-      await request.response.close();
-      return;
     }
 
+    // -------------------------------------------------------------
+    // DATABASE COLLECTION ENDPOINTS
+    // -------------------------------------------------------------
     try {
       var activeDb = await getDb();
       if (activeDb == null) {
         request.response.statusCode = HttpStatus.serviceUnavailable;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'error': 'MongoDB Atlas unavailable'}));
         await request.response.close();
         return;
       }
 
-      // -------------------------------------------------------------
       // USER COLLECTION ENDPOINTS
-      // -------------------------------------------------------------
       if (path == '/api/user' && request.method == 'POST') {
         final bodyStr = await utf8.decoder.bind(request).join();
         final data = jsonDecode(bodyStr) as Map<String, dynamic>;
@@ -345,7 +811,7 @@ void main() async {
           print("✓ [Bridge] New user inserted in Atlas: ${data['name']} ($phone / $username)");
         }
 
-        // Also cross-sync profileImageUrl to profiles collection if present
+        // Cross-sync profileImageUrl to profiles collection if present
         final imgUrl = data['profileImageUrl']?.toString() ?? data['r2ProfileImageUrl']?.toString();
         if (imgUrl != null && imgUrl.isNotEmpty && phone.isNotEmpty) {
           final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
@@ -367,6 +833,7 @@ void main() async {
         if (username.isNotEmpty) _userDocCache[username.toLowerCase()] = data;
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
         return;
@@ -377,7 +844,6 @@ void main() async {
         final queryLower = query.toLowerCase();
         final clean = query.replaceAll(RegExp(r'\D'), '');
 
-        // Fast-path in-memory cache hit (0ms)
         if (_userDocCache.containsKey(clean) || _userDocCache.containsKey(queryLower) || _userDocCache.containsKey(query)) {
           final cached = _userDocCache[clean] ?? _userDocCache[queryLower] ?? _userDocCache[query];
           request.response.statusCode = HttpStatus.ok;
@@ -412,7 +878,6 @@ void main() async {
           }
         }
 
-        // Cross-check profiles collection if profileImageUrl is empty
         if (doc != null) {
           final rawImg = doc['profileImageUrl']?.toString() ?? doc['r2ProfileImageUrl']?.toString();
           if (rawImg == null || rawImg.isEmpty) {
@@ -440,9 +905,7 @@ void main() async {
         return;
       }
 
-      // -------------------------------------------------------------
       // PROFILE COLLECTION ENDPOINTS
-      // -------------------------------------------------------------
       if (path == '/api/profile' && request.method == 'POST') {
         final bodyStr = await utf8.decoder.bind(request).join();
         final data = jsonDecode(bodyStr) as Map<String, dynamic>;
@@ -474,7 +937,6 @@ void main() async {
           print("✓ [Bridge] New profile inserted in Atlas: ${data['name']} ($id / $phone)");
         }
 
-        // Also cross-sync users login collection with updated phone, name & image
         if (phone.isNotEmpty || email.isNotEmpty) {
           try {
             final usersCol = activeDb.collection('users');
@@ -497,7 +959,6 @@ void main() async {
                   'updatedAt': DateTime.now().toIso8601String(),
                 }
               });
-              print("✓ [Bridge] Synced login account in Atlas: $phone ($name)");
             }
           } catch (_) {}
         }
@@ -508,6 +969,7 @@ void main() async {
         if (cleanP.isNotEmpty) _profileDocCache[cleanP] = data;
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
         return;
@@ -517,7 +979,6 @@ void main() async {
         final query = request.uri.queryParameters['query'] ?? '';
         final clean = query.replaceAll(RegExp(r'\D'), '');
 
-        // Fast-path in-memory cache hit (0ms)
         if (_profileDocCache.containsKey(clean) || _profileDocCache.containsKey(query)) {
           final cached = _profileDocCache[clean] ?? _profileDocCache[query];
           request.response.statusCode = HttpStatus.ok;
@@ -550,7 +1011,6 @@ void main() async {
           }
         }
 
-        // Cross-check users collection if profileImageUrl is empty
         if (doc != null) {
           final rawImg = doc['profileImageUrl']?.toString() ?? doc['r2ProfileImageUrl']?.toString();
           if (rawImg == null || rawImg.isEmpty) {
@@ -578,15 +1038,12 @@ void main() async {
         return;
       }
 
-      // -------------------------------------------------------------
       // SHORTLIST COLLECTION ENDPOINTS
-      // -------------------------------------------------------------
       if (path == '/api/shortlist' && request.method == 'GET') {
         final userId = request.uri.queryParameters['userId'] ?? '';
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
         final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
 
-        // Fast-path in-memory cache hit (0ms)
         if (_shortlistDocCache.containsKey(userId) || _shortlistDocCache.containsKey(cleanPhone) || _shortlistDocCache.containsKey(userPhone)) {
           final cached = _shortlistDocCache[userId] ?? _shortlistDocCache[cleanPhone] ?? _shortlistDocCache[userPhone];
           request.response.statusCode = HttpStatus.ok;
@@ -604,9 +1061,6 @@ void main() async {
         if (doc == null && cleanPhone.isNotEmpty) {
           doc = await shortlistsCol.findOne(where.eq('userPhone', cleanPhone));
           doc ??= await shortlistsCol.findOne(where.eq('userPhone', userPhone));
-        }
-        if (doc == null && cleanPhone.isNotEmpty) {
-          doc = await shortlistsCol.findOne(where.match('userPhone', '.*$cleanPhone.*'));
         }
 
         if (doc != null) {
@@ -638,24 +1092,22 @@ void main() async {
             ? where.eq('userId', userId)
             : (cleanPhone.isNotEmpty ? where.eq('userPhone', cleanPhone) : where.eq('userPhone', userPhone));
         await shortlistsCol.update(selector, {r'$set': data}, upsert: true);
-        print("✓ [Bridge] Shortlist updated in Atlas for user: $userId (Phone: $userPhone, count: ${(data['profileIds'] as List?)?.length})");
+        print("✓ [Bridge] Shortlist updated in Atlas for user: $userId (count: ${(data['profileIds'] as List?)?.length})");
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
         return;
       }
 
-      // -------------------------------------------------------------
       // PAYMENTS COLLECTION ENDPOINTS
-      // -------------------------------------------------------------
       if (path == '/api/payments' && request.method == 'GET') {
         final userId = request.uri.queryParameters['userId'] ?? '';
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
         final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
         final cacheKey = userId.isNotEmpty ? userId : (cleanPhone.isNotEmpty ? cleanPhone : 'all');
 
-        // Fast-path in-memory cache hit (0ms)
         if (_paymentsDocCache.containsKey(cacheKey)) {
           request.response.statusCode = HttpStatus.ok;
           request.response.headers.contentType = ContentType.json;
@@ -697,7 +1149,6 @@ void main() async {
         await paymentsCol.update(where.eq('id', id), {r'$set': data}, upsert: true);
         print("✓ [Bridge] Payment stored/updated in Atlas: $id (Status: $status)");
 
-        // If approved, automatically unlock contacts & horoscope in Atlas profiles collection
         if (status == 'approved' && data['profileIds'] is List) {
           final profilesCol = activeDb.collection('profiles');
           for (final pid in (data['profileIds'] as List)) {
@@ -707,10 +1158,10 @@ void main() async {
               upsert: false,
             );
           }
-          print("✓ [Bridge] Automatically marked profiles as unlocked in Atlas: ${data['profileIds']}");
         }
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
         return;
@@ -726,7 +1177,6 @@ void main() async {
         return;
       }
 
-      // DELETE Profile from MongoDB Atlas
       if ((path == '/api/profile' && request.method == 'DELETE') ||
           (path == '/api/profile/delete' && (request.method == 'POST' || request.method == 'DELETE'))) {
         String id = request.uri.queryParameters['id'] ?? '';
@@ -754,6 +1204,7 @@ void main() async {
           selector = where.eq('phone', cleanPhone).or(where.eq('phone', phone));
         } else {
           request.response.statusCode = HttpStatus.badRequest;
+          request.response.headers.contentType = ContentType.json;
           request.response.write(jsonEncode({'error': 'Profile id or phone required for deletion'}));
           await request.response.close();
           return;
@@ -762,21 +1213,8 @@ void main() async {
         final result = await profilesCol.remove(selector);
         print("✓ [Bridge] Profile deleted from Atlas: id=$id, phone=$phone, result=$result");
 
-        // Also clean up from shortlists collection
-        if (id.isNotEmpty) {
-          try {
-            final shortlistsCol = activeDb.collection('shortlists');
-            await shortlistsCol.update(
-              where.exists('profileIds'),
-              {
-                r'$pull': {'profileIds': id}
-              },
-              multiUpdate: true,
-            );
-          } catch (_) {}
-        }
-
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'deleted': id.isNotEmpty ? id : phone}));
         await request.response.close();
         return;
@@ -784,12 +1222,14 @@ void main() async {
 
       // Default 404
       request.response.statusCode = HttpStatus.notFound;
-      request.response.write(jsonEncode({'error': 'Not found', 'path': path}));
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({'error': 'Endpoint not found', 'path': path}));
       await request.response.close();
     } catch (e) {
       print("Bridge request error: $e");
       try {
         request.response.statusCode = HttpStatus.internalServerError;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'error': e.toString()}));
         await request.response.close();
       } catch (_) {}

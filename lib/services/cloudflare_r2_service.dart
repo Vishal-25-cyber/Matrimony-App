@@ -1,35 +1,33 @@
+// ignore_for_file: avoid_print
 import 'dart:convert';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 
-/// Cloudflare R2 S3-compatible Storage Service
-/// Connected to bucket: matrimony-profile-images
+/// Cloudflare R2 Client Service (Frontend)
+///
+/// Communicates EXCLUSIVELY with the secure Backend API server.
+/// Cloudflare R2 credentials (Access Keys & Secrets) are NEVER stored or exposed
+/// in Flutter/client code.
 class CloudflareR2Service {
   static final CloudflareR2Service _instance = CloudflareR2Service._internal();
   factory CloudflareR2Service() => _instance;
   CloudflareR2Service._internal();
 
-  // Cloudflare R2 Credentials
-  static const String accountApiToken =
-      String.fromEnvironment('CLOUDFLARE_R2_ACCOUNT_API_TOKEN', defaultValue: '');
-  static const String accessKeyId = "16fa39f1d2e94ee5405a9995244691f0";
-  static const String secretAccessKey =
-      "06dfc88dcbf86cb0174233ab6670274da20d30de78383b87d2c3d08a736e1bd3";
-  static const String endpoint =
-      "https://b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com";
-  static const String bucketName = "matrimony-profile-images";
-  static const String region = "auto";
-  static const String host =
-      "b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com";
+  /// Backend API base URL
+  static const String backendBaseUrl = "http://127.0.0.1:8765";
 
-  /// Set to true during test executions to avoid writing dummy files to live R2 bucket
+  /// Bucket metadata configuration
+  static const String bucketName = "matrimony-profile-images";
+  static const String uploadPrefix = "profiles/";
+
+  /// Set to true during test executions
   static bool isTestMode = const bool.fromEnvironment('FLUTTER_TEST');
 
-  /// Uploads user profile image to Cloudflare R2.
-  /// Uses a clean, single dedicated key per user (`profiles/{userId}_avatar.ext`)
-  /// so old photos are replaced and no duplicate/junk images accumulate.
-  /// Returns a presigned GET URL that works seamlessly even when Public Access is disabled on R2.
+  /// Uploads user profile image to Cloudflare R2 via the Backend API.
+  /// Sends a secure multipart/form-data POST request to `/api/profile/upload-image`.
+  /// The backend validates magic bytes, checks max size, generates a safe key,
+  /// saves to Cloudflare R2, updates MongoDB Atlas metadata, and returns a presigned URL.
   Future<String> uploadProfileImage({
     required Uint8List imageBytes,
     required String fileName,
@@ -37,203 +35,137 @@ class CloudflareR2Service {
     String? oldImageUrl,
     String contentType = "image/jpeg",
   }) async {
-    // Clean identifier for deterministic single-image per user
-    final cleanId = (userId != null && userId.trim().isNotEmpty)
+    final cleanUserId = (userId != null && userId.trim().isNotEmpty)
         ? userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')
-        : fileName.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+        : 'user';
 
-    final String ext = fileName.toLowerCase().endsWith('.png') ? 'png' : 'jpg';
-    final String cleanContentType = ext == 'png' ? "image/png" : contentType;
-    final String objectKey = "profiles/${cleanId}_avatar.$ext";
+    final String ext = fileName.toLowerCase().endsWith('.png')
+        ? 'png'
+        : (fileName.toLowerCase().endsWith('.webp') ? 'webp' : 'jpg');
+    final String cleanContentType = ext == 'png'
+        ? "image/png"
+        : (ext == 'webp' ? "image/webp" : "image/jpeg");
+    final String objectKey = "$uploadPrefix${cleanUserId}_avatar.$ext";
 
-    // In unit/widget tests, do not spam live Cloudflare R2 bucket with dummy test strings
+    // In automated test environments without live bridge backend, return safe presigned mockup
     if (isTestMode) {
-      return generatePresignedGetUrl(objectKey);
+      return "https://b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com/$bucketName/$objectKey?X-Amz-Expires=604800";
     }
 
-    // If a previous distinct object URL exists in this bucket, clean it up
-    if (oldImageUrl != null && oldImageUrl.contains(bucketName)) {
-      try {
-        final oldKey = extractObjectKey(oldImageUrl);
-        if (oldKey != null && oldKey != objectKey) {
-          await deleteObject(oldKey);
-        }
-      } catch (_) {}
-    }
-
-    bool uploadedSuccessfully = false;
-
-    // 1. First attempt: Upload via Web Bridge (works reliably on Chrome/Web without browser CORS or forbidden 'Host' header)
     try {
-      final bridgeUri = Uri.parse("http://127.0.0.1:8765/api/r2-upload");
-      final bridgeResponse = await http.post(
-        bridgeUri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'objectKey': objectKey,
-          'imageBase64': base64Encode(imageBytes),
-          'contentType': cleanContentType,
-          'userId': userId ?? '',
-        }),
-      ).timeout(const Duration(seconds: 15));
+      final uri = Uri.parse("$backendBaseUrl/api/profile/upload-image");
+      final request = http.MultipartRequest('POST', uri);
 
-      if (bridgeResponse.statusCode == 200) {
-        final data = jsonDecode(bridgeResponse.body);
+      // Authentication headers and user identity
+      request.headers['Authorization'] = 'Bearer $cleanUserId';
+      request.headers['X-User-Id'] = cleanUserId;
+      request.headers['Accept'] = 'application/json';
+
+      request.fields['userId'] = cleanUserId;
+      if (oldImageUrl != null && oldImageUrl.isNotEmpty) {
+        request.fields['oldKey'] = extractObjectKey(oldImageUrl) ?? '';
+      }
+
+      // Add image file as multipart
+      final multipartFile = http.MultipartFile.fromBytes(
+        'image',
+        imageBytes,
+        filename: fileName.isNotEmpty ? fileName : "avatar.$ext",
+        contentType: MediaType.parse(cleanContentType),
+      );
+      request.files.add(multipartFile);
+
+      final streamedResponse = await request.send().timeout(const Duration(seconds: 15));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (data['success'] == true) {
-          uploadedSuccessfully = true;
+          final url = data['url']?.toString() ?? '';
           if (kDebugMode) {
-            print("✓ [Cloudflare R2] Successfully uploaded to R2 via Web Bridge: $objectKey");
+            print("✓ [Cloudflare R2] Image uploaded via backend: ${data['objectKey']}");
           }
-          if (data['url'] != null && data['url'].toString().isNotEmpty) {
-            return data['url'].toString();
-          }
+          return url.isNotEmpty
+              ? url
+              : "$backendBaseUrl/api/profile/image?key=${Uri.encodeQueryComponent(objectKey)}";
         }
       }
-    } catch (e) {
-      if (kDebugMode) {
-        print("ℹ [Cloudflare R2] Bridge upload attempt: $e (trying direct S3 if native)");
-      }
-    }
 
-    // 2. Direct S3 SigV4 PUT fallback (for native mobile platforms or direct TCP)
-    if (!uploadedSuccessfully && !kIsWeb) {
-      final Uri uri = Uri.parse("$endpoint/$bucketName/$objectKey");
-      final DateTime now = DateTime.now().toUtc();
-      final String amzDate = _formatDateTime(now);
-      final String dateStamp = _formatDate(now);
-      final String payloadHash = sha256.convert(imageBytes).toString();
-
-      final String canonicalUri = "/$bucketName/$objectKey";
-      const String canonicalQueryString = "";
-      final String canonicalHeaders =
-          "host:$host\nx-amz-content-sha256:$payloadHash\nx-amz-date:$amzDate\n";
-      const String signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-      final String canonicalRequest =
-          "PUT\n$canonicalUri\n$canonicalQueryString\n$canonicalHeaders\n$signedHeaders\n$payloadHash";
-
-      const String algorithm = "AWS4-HMAC-SHA256";
-      final String credentialScope = "$dateStamp/$region/s3/aws4_request";
-      final String stringToSign =
-          "$algorithm\n$amzDate\n$credentialScope\n${sha256.convert(utf8.encode(canonicalRequest))}";
-
-      final List<int> signingKey = _getSignatureKey(secretAccessKey, dateStamp, region, "s3");
-      final String signature = Hmac(sha256, signingKey).convert(utf8.encode(stringToSign)).toString();
-
-      final String authorizationHeader =
-          "$algorithm Credential=$accessKeyId/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature";
-
+      // If backend returned specific error, surface it
       try {
-        final response = await http.put(
-          uri,
-          headers: {
-            'Host': host,
-            'Content-Type': cleanContentType,
-            'x-amz-date': amzDate,
-            'x-amz-content-sha256': payloadHash,
-            'Authorization': authorizationHeader,
-          },
-          body: imageBytes,
-        ).timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200 || response.statusCode == 204) {
-          uploadedSuccessfully = true;
-          if (kDebugMode) {
-            print("✓ [Cloudflare R2] Profile image saved to R2 via direct S3: ${response.statusCode} -> $objectKey");
-          }
+        final errData = jsonDecode(response.body);
+        if (errData['error'] != null) {
+          throw Exception(errData['error']);
         }
       } catch (e) {
-        if (kDebugMode) {
-          print("⚠ [Cloudflare R2] Direct S3 upload exception: $e");
-        }
+        if (e is Exception && !e.toString().contains('FormatException')) rethrow;
       }
-    }
 
-    if (!uploadedSuccessfully && !isTestMode) {
-      throw Exception("படத்தைப் பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும் / Unable to upload photo. Please try again.");
+      throw Exception("Upload failed with status ${response.statusCode}");
+    } catch (e) {
+      if (kDebugMode) {
+        print("⚠ [Cloudflare R2] Upload error via backend: $e");
+      }
+      rethrow;
     }
-
-    return generatePresignedGetUrl(objectKey);
   }
 
-  /// Generates an AWS S3 SigV4 Presigned GET URL with 7 days expiration.
-  /// Allows browsers and mobile apps to display images directly from private R2 buckets.
-  String generatePresignedGetUrl(String objectKey, {int expiresInSeconds = 604800}) {
-    final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
-    final now = DateTime.now().toUtc();
-    final amzDate = _formatDateTime(now);
-    final dateStamp = _formatDate(now);
-
-    const algorithm = "AWS4-HMAC-SHA256";
-    final credentialScope = "$dateStamp/$region/s3/aws4_request";
-    final credential = Uri.encodeComponent("$accessKeyId/$credentialScope");
-    const signedHeaders = "host";
-
-    final queryParams = [
-      "X-Amz-Algorithm=$algorithm",
-      "X-Amz-Credential=$credential",
-      "X-Amz-Date=$amzDate",
-      "X-Amz-Expires=$expiresInSeconds",
-      "X-Amz-SignedHeaders=$signedHeaders",
-    ];
-    queryParams.sort();
-    final canonicalQueryString = queryParams.join('&');
-
-    final canonicalUri = "/$bucketName/$cleanKey";
-    final canonicalHeaders = "host:$host\n";
-    const payloadHash = "UNSIGNED-PAYLOAD";
-
-    final canonicalRequest =
-        "GET\n$canonicalUri\n$canonicalQueryString\n$canonicalHeaders\n$signedHeaders\n$payloadHash";
-
-    final stringToSign =
-        "$algorithm\n$amzDate\n$credentialScope\n${sha256.convert(utf8.encode(canonicalRequest))}";
-
-    final signingKey = _getSignatureKey(secretAccessKey, dateStamp, region, "s3");
-    final signature = Hmac(sha256, signingKey).convert(utf8.encode(stringToSign)).toString();
-
-    return "$endpoint/$bucketName/$cleanKey?$canonicalQueryString&X-Amz-Signature=$signature";
+  /// Retrieves user's profile image information from the backend
+  Future<String?> getProfileImageUrl(String userId) async {
+    if (userId.trim().isEmpty) return null;
+    try {
+      final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final uri = Uri.parse("$backendBaseUrl/api/profile/image/$cleanId?json=true");
+      final res = await http.get(uri, headers: {'Accept': 'application/json'}).timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body) as Map<String, dynamic>;
+        return data['url']?.toString();
+      }
+    } catch (_) {}
+    return null;
   }
 
-  /// Optional Public Domain for Cloudflare R2 bucket (e.g. pub-xxxxxx.r2.dev or custom domain).
-  /// If set, direct public CDN URLs are used instead of presigned URLs or localhost bridge.
-  static const String publicDomain =
-      String.fromEnvironment('CLOUDFLARE_R2_PUBLIC_DOMAIN', defaultValue: '');
+  /// Deletes user's profile image from Cloudflare R2 and MongoDB Atlas
+  Future<bool> deleteProfileImage(String userId) async {
+    if (userId.trim().isEmpty) return false;
+    try {
+      final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final uri = Uri.parse("$backendBaseUrl/api/profile/image?userId=${Uri.encodeQueryComponent(cleanId)}");
+      final res = await http.delete(uri).timeout(const Duration(seconds: 8));
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data['success'] == true;
+      }
+    } catch (_) {}
+    return false;
+  }
 
-  /// Ensures any stored R2 URL has a fresh valid signature for display.
+  /// Ensures any stored R2 URL or key has a displayable valid URL.
+  /// Works reliably with Flutter Web and Mobile without CORS or expired signatures.
   String ensureDisplayableUrl(String? rawUrlOrKey) {
     if (rawUrlOrKey == null || rawUrlOrKey.trim().isEmpty) return '';
     final trimmed = rawUrlOrKey.trim();
 
-    // If it is already a direct bridge URL on Web, return it as-is (do not re-wrap)
-    if (kIsWeb && (trimmed.contains('127.0.0.1:8765/api/r2-image') || trimmed.contains('localhost:8765/api/r2-image'))) {
+    // If it's already a direct backend proxy URL, return as-is
+    if (trimmed.contains('/api/profile/image') || trimmed.contains('/api/r2-image')) {
       return trimmed;
     }
 
     final key = extractObjectKey(trimmed);
     if (key != null && key.isNotEmpty) {
-      // If a public domain is enabled on Cloudflare R2, use fast direct CDN URL
-      if (publicDomain.isNotEmpty) {
-        final cleanBase = publicDomain.endsWith('/')
-            ? publicDomain.substring(0, publicDomain.length - 1)
-            : publicDomain;
-        return "$cleanBase/$key";
-      }
-      if (kIsWeb) {
-        return "http://127.0.0.1:8765/api/r2-image?key=$key";
-      }
-      return generatePresignedGetUrl(key);
+      // In web or local environment, route through backend proxy for zero-CORS display
+      return "$backendBaseUrl/api/profile/image?key=${Uri.encodeQueryComponent(key)}";
     }
 
     return trimmed;
   }
 
-  /// Extracts the object key from a full Cloudflare R2 URL, bridge URL, or relative path
+  /// Extracts the clean object key (e.g. `profiles/pm_1000_avatar.jpg`) from a URL or key string
   String? extractObjectKey(String urlOrKey) {
     final trimmed = urlOrKey.trim();
     if (trimmed.isEmpty) return null;
 
-    // 1. If it's already a bridge URL with key param, extract clean key:
-    if (trimmed.contains('/api/r2-image')) {
+    if (trimmed.contains('/api/profile/image') || trimmed.contains('/api/r2-image')) {
       try {
         final uri = Uri.parse(trimmed);
         final paramKey = uri.queryParameters['key'];
@@ -243,24 +175,16 @@ class CloudflareR2Service {
       } catch (_) {}
     }
 
-    // 2. If it's already a relative path:
     if (!trimmed.startsWith('http')) {
       return trimmed.startsWith('/') ? trimmed.substring(1) : trimmed;
     }
 
-    // 3. If it's a full URL:
     try {
       final uri = Uri.parse(trimmed);
       final segments = uri.pathSegments;
       final bucketIdx = segments.indexOf(bucketName);
       if (bucketIdx != -1 && bucketIdx + 1 < segments.length) {
         return segments.sublist(bucketIdx + 1).join('/');
-      }
-      // If public domain or r2.dev host
-      if (uri.host.contains('r2.cloudflarestorage.com') ||
-          uri.host.contains('r2.dev') ||
-          (publicDomain.isNotEmpty && uri.host.contains(Uri.tryParse(publicDomain)?.host ?? ''))) {
-        return uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
       }
       if (trimmed.contains('profiles/')) {
         final idx = trimmed.indexOf('profiles/');
@@ -271,70 +195,5 @@ class CloudflareR2Service {
     } catch (_) {
       return null;
     }
-  }
-
-  /// Deletes an object from Cloudflare R2
-  Future<bool> deleteObject(String objectKey) async {
-    final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
-    final now = DateTime.now().toUtc();
-    final amzDate = _formatDateTime(now);
-    final dateStamp = _formatDate(now);
-
-    final payloadHash = sha256.convert(utf8.encode("")).toString();
-    final canonicalUri = "/$bucketName/$cleanKey";
-    const canonicalQueryString = "";
-    final canonicalHeaders =
-        "host:$host\nx-amz-content-sha256:$payloadHash\nx-amz-date:$amzDate\n";
-    const signedHeaders = "host;x-amz-content-sha256;x-amz-date";
-
-    final canonicalRequest =
-        "DELETE\n$canonicalUri\n$canonicalQueryString\n$canonicalHeaders\n$signedHeaders\n$payloadHash";
-
-    const algorithm = "AWS4-HMAC-SHA256";
-    final credentialScope = "$dateStamp/$region/s3/aws4_request";
-    final stringToSign =
-        "$algorithm\n$amzDate\n$credentialScope\n${sha256.convert(utf8.encode(canonicalRequest))}";
-
-    final signingKey = _getSignatureKey(secretAccessKey, dateStamp, region, "s3");
-    final signature = Hmac(sha256, signingKey).convert(utf8.encode(stringToSign)).toString();
-
-    final authorizationHeader =
-        "$algorithm Credential=$accessKeyId/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature";
-
-    try {
-      final uri = Uri.parse("$endpoint/$bucketName/$cleanKey");
-      final res = await http.delete(uri, headers: {
-        'Host': host,
-        'x-amz-date': amzDate,
-        'x-amz-content-sha256': payloadHash,
-        'Authorization': authorizationHeader,
-      }).timeout(const Duration(seconds: 5));
-      return res.statusCode == 200 || res.statusCode == 204;
-    } catch (e) {
-      if (kDebugMode) print("⚠ [Cloudflare R2] Delete failed for $cleanKey: $e");
-      return false;
-    }
-  }
-
-  /// AWS SigV4 Helper methods
-  static String _formatDateTime(DateTime dt) {
-    return "${_formatDate(dt)}T"
-        "${dt.hour.toString().padLeft(2, '0')}"
-        "${dt.minute.toString().padLeft(2, '0')}"
-        "${dt.second.toString().padLeft(2, '0')}Z";
-  }
-
-  static String _formatDate(DateTime dt) {
-    return "${dt.year.toString().padLeft(4, '0')}"
-        "${dt.month.toString().padLeft(2, '0')}"
-        "${dt.day.toString().padLeft(2, '0')}";
-  }
-
-  static List<int> _getSignatureKey(String key, String dateStamp, String regionName, String serviceName) {
-    final kDate = Hmac(sha256, utf8.encode("AWS4$key")).convert(utf8.encode(dateStamp)).bytes;
-    final kRegion = Hmac(sha256, kDate).convert(utf8.encode(regionName)).bytes;
-    final kService = Hmac(sha256, kRegion).convert(utf8.encode(serviceName)).bytes;
-    final kSigning = Hmac(sha256, kService).convert(utf8.encode("aws4_request")).bytes;
-    return kSigning;
   }
 }
