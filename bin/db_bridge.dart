@@ -15,6 +15,12 @@ const String r2Region = "auto";
 // In-memory image cache for instant, zero-latency avatar rendering in Flutter Web
 final Map<String, List<int>> _imageCache = {};
 
+// In-memory document caches for sub-millisecond query responses
+final Map<String, Map<String, dynamic>> _userDocCache = {};
+final Map<String, Map<String, dynamic>> _profileDocCache = {};
+final Map<String, Map<String, dynamic>> _shortlistDocCache = {};
+final Map<String, List<Map<String, dynamic>>> _paymentsDocCache = {};
+
 Future<bool> uploadToR2(String objectKey, List<int> imageBytes, String contentType) async {
   final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
   final now = DateTime.now().toUtc();
@@ -108,7 +114,7 @@ String generateR2PresignedUrl(String objectKey, {int expiresInSeconds = 604800})
 }
 
 void main() async {
-  const uri = "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio";
+  const uri = "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true";
   const port = 8765;
 
   print("Starting MongoDB Atlas HTTP Web Bridge on port $port...");
@@ -116,13 +122,13 @@ void main() async {
   bool isConnecting = false;
 
   Future<Db?> getDb({bool forceReconnect = false}) async {
-    if (!forceReconnect && db != null && db!.state == State.open && db!.isConnected) {
+    if (!forceReconnect && db != null && db!.state == State.open) {
       return db;
     }
     if (isConnecting) {
       for (int i = 0; i < 20; i++) {
-        await Future.delayed(const Duration(milliseconds: 250));
-        if (db != null && db!.state == State.open && db!.isConnected) return db;
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (db != null && db!.state == State.open) return db;
         if (!isConnecting) break;
       }
     }
@@ -148,14 +154,14 @@ void main() async {
   // Pre-connect in background without blocking server bind
   getDb().ignore();
 
-  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
+  final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
   print("✓ MongoDB Atlas Bridge listening at http://127.0.0.1:$port");
 
   // Non-blocking concurrent request listener
   server.listen((HttpRequest request) async {
     // Add CORS headers for Flutter Web
     request.response.headers.add('Access-Control-Allow-Origin', '*');
-    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
     request.response.headers.add('Access-Control-Allow-Headers', 'Content-Type, Origin, Accept, Authorization');
 
     if (request.method == 'OPTIONS') {
@@ -168,7 +174,7 @@ void main() async {
 
     // Fast-path health check
     if (path == '/api/health') {
-      final isDbUp = db != null && db!.state == State.open && db!.isConnected;
+      final isDbUp = db != null && db!.state == State.open;
       request.response.statusCode = HttpStatus.ok;
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
@@ -181,7 +187,7 @@ void main() async {
     }
 
     // Cloudflare R2 Image Fetch / Proxy Endpoint with CORS for Web
-    if (path == '/api/r2-image' && request.method == 'GET') {
+    if (path == '/api/r2-image' && (request.method == 'GET' || request.method == 'HEAD')) {
       try {
         final objectKey = request.uri.queryParameters['key'] ?? '';
         if (objectKey.isEmpty) {
@@ -194,12 +200,16 @@ void main() async {
         final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
         final mime = cleanKey.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
         request.response.headers.contentType = ContentType.parse(mime);
-        request.response.headers.add('Cache-Control', 'public, max-age=86400');
+        request.response.headers.add('Cache-Control', 'public, max-age=31536000, immutable');
 
         // Check in-memory cache first (0ms response)
         if (_imageCache.containsKey(cleanKey)) {
+          final bytes = _imageCache[cleanKey]!;
+          request.response.headers.contentLength = bytes.length;
           request.response.statusCode = HttpStatus.ok;
-          request.response.add(_imageCache[cleanKey]!);
+          if (request.method == 'GET') {
+            request.response.add(bytes);
+          }
           await request.response.close();
           return;
         }
@@ -209,8 +219,11 @@ void main() async {
 
         if (r2Res.statusCode == 200) {
           _imageCache[cleanKey] = r2Res.bodyBytes;
+          request.response.headers.contentLength = r2Res.bodyBytes.length;
           request.response.statusCode = HttpStatus.ok;
-          request.response.add(r2Res.bodyBytes);
+          if (request.method == 'GET') {
+            request.response.add(r2Res.bodyBytes);
+          }
         } else {
           request.response.statusCode = r2Res.statusCode;
           request.response.write(jsonEncode({'error': 'Image not found in R2'}));
@@ -348,6 +361,11 @@ void main() async {
           ).ignore();
         }
 
+        final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+        if (cleanPhone.isNotEmpty) _userDocCache[cleanPhone] = data;
+        if (phone.isNotEmpty) _userDocCache[phone] = data;
+        if (username.isNotEmpty) _userDocCache[username.toLowerCase()] = data;
+
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
@@ -358,6 +376,16 @@ void main() async {
         final query = request.uri.queryParameters['query'] ?? '';
         final queryLower = query.toLowerCase();
         final clean = query.replaceAll(RegExp(r'\D'), '');
+
+        // Fast-path in-memory cache hit (0ms)
+        if (_userDocCache.containsKey(clean) || _userDocCache.containsKey(queryLower) || _userDocCache.containsKey(query)) {
+          final cached = _userDocCache[clean] ?? _userDocCache[queryLower] ?? _userDocCache[query];
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': true, 'user': cached}));
+          await request.response.close();
+          return;
+        }
 
         final usersCol = activeDb.collection('users');
         Map<String, dynamic>? doc;
@@ -400,6 +428,9 @@ void main() async {
               }
             } catch (_) {}
           }
+          if (clean.isNotEmpty) _userDocCache[clean] = doc;
+          if (queryLower.isNotEmpty) _userDocCache[queryLower] = doc;
+          _userDocCache[query] = doc;
         }
 
         request.response.statusCode = HttpStatus.ok;
@@ -471,6 +502,11 @@ void main() async {
           } catch (_) {}
         }
 
+        if (id.isNotEmpty) _profileDocCache[id] = data;
+        if (phone.isNotEmpty) _profileDocCache[phone] = data;
+        final cleanP = phone.replaceAll(RegExp(r'\D'), '');
+        if (cleanP.isNotEmpty) _profileDocCache[cleanP] = data;
+
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
@@ -480,6 +516,16 @@ void main() async {
       if (path == '/api/profile' && request.method == 'GET') {
         final query = request.uri.queryParameters['query'] ?? '';
         final clean = query.replaceAll(RegExp(r'\D'), '');
+
+        // Fast-path in-memory cache hit (0ms)
+        if (_profileDocCache.containsKey(clean) || _profileDocCache.containsKey(query)) {
+          final cached = _profileDocCache[clean] ?? _profileDocCache[query];
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': true, 'profile': cached}));
+          await request.response.close();
+          return;
+        }
 
         final profilesCol = activeDb.collection('profiles');
         Map<String, dynamic>? doc;
@@ -520,6 +566,9 @@ void main() async {
               }
             } catch (_) {}
           }
+          if (clean.isNotEmpty) _profileDocCache[clean] = doc;
+          _profileDocCache[query] = doc;
+          if (doc['id'] != null) _profileDocCache[doc['id'].toString()] = doc;
         }
 
         request.response.statusCode = HttpStatus.ok;
@@ -537,6 +586,16 @@ void main() async {
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
         final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
 
+        // Fast-path in-memory cache hit (0ms)
+        if (_shortlistDocCache.containsKey(userId) || _shortlistDocCache.containsKey(cleanPhone) || _shortlistDocCache.containsKey(userPhone)) {
+          final cached = _shortlistDocCache[userId] ?? _shortlistDocCache[cleanPhone] ?? _shortlistDocCache[userPhone];
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': true, 'shortlist': cached}));
+          await request.response.close();
+          return;
+        }
+
         final shortlistsCol = activeDb.collection('shortlists');
         Map<String, dynamic>? doc;
         if (userId.isNotEmpty) {
@@ -548,6 +607,12 @@ void main() async {
         }
         if (doc == null && cleanPhone.isNotEmpty) {
           doc = await shortlistsCol.findOne(where.match('userPhone', '.*$cleanPhone.*'));
+        }
+
+        if (doc != null) {
+          if (userId.isNotEmpty) _shortlistDocCache[userId] = doc;
+          if (cleanPhone.isNotEmpty) _shortlistDocCache[cleanPhone] = doc;
+          if (userPhone.isNotEmpty) _shortlistDocCache[userPhone] = doc;
         }
 
         request.response.statusCode = HttpStatus.ok;
@@ -563,6 +628,10 @@ void main() async {
         final userId = data['userId']?.toString() ?? '';
         final userPhone = data['userPhone']?.toString() ?? '';
         final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
+
+        if (userId.isNotEmpty) _shortlistDocCache[userId] = data;
+        if (cleanPhone.isNotEmpty) _shortlistDocCache[cleanPhone] = data;
+        if (userPhone.isNotEmpty) _shortlistDocCache[userPhone] = data;
 
         final shortlistsCol = activeDb.collection('shortlists');
         final selector = userId.isNotEmpty
@@ -584,6 +653,16 @@ void main() async {
         final userId = request.uri.queryParameters['userId'] ?? '';
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
         final cleanPhone = userPhone.replaceAll(RegExp(r'\D'), '');
+        final cacheKey = userId.isNotEmpty ? userId : (cleanPhone.isNotEmpty ? cleanPhone : 'all');
+
+        // Fast-path in-memory cache hit (0ms)
+        if (_paymentsDocCache.containsKey(cacheKey)) {
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': true, 'payments': _paymentsDocCache[cacheKey]}));
+          await request.response.close();
+          return;
+        }
 
         final paymentsCol = activeDb.collection('payments');
         List<Map<String, dynamic>> docs;
@@ -598,6 +677,8 @@ void main() async {
         } else {
           docs = await paymentsCol.find().toList();
         }
+
+        _paymentsDocCache[cacheKey] = docs;
 
         request.response.statusCode = HttpStatus.ok;
         request.response.headers.contentType = ContentType.json;

@@ -10,14 +10,14 @@ class MongoDBService {
   factory MongoDBService() => _instance;
   // MongoDB Atlas Cloud Connection (Active Cluster)
   static const String defaultAtlasUri =
-      "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio";
+      "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true";
   static String atlasUri = defaultAtlasUri;
 
   // Local MongoDB connection fallback
   static const String localUri = "mongodb://127.0.0.1:27017/pandarathar_matrimony";
 
   // HTTP Web Bridge URL (for Chrome / Flutter Web)
-  static const String webBridgeUrl = "http://localhost:8765";
+  static const String webBridgeUrl = "http://127.0.0.1:8765";
 
   Db? _db;
   bool _isConnected = false;

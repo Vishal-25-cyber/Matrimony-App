@@ -65,7 +65,7 @@ class CloudflareR2Service {
 
     // 1. First attempt: Upload via Web Bridge (works reliably on Chrome/Web without browser CORS or forbidden 'Host' header)
     try {
-      final bridgeUri = Uri.parse("http://localhost:8765/api/r2-upload");
+      final bridgeUri = Uri.parse("http://127.0.0.1:8765/api/r2-upload");
       final bridgeResponse = await http.post(
         bridgeUri,
         headers: {'Content-Type': 'application/json'},
@@ -73,6 +73,7 @@ class CloudflareR2Service {
           'objectKey': objectKey,
           'imageBase64': base64Encode(imageBytes),
           'contentType': cleanContentType,
+          'userId': userId ?? '',
         }),
       ).timeout(const Duration(seconds: 15));
 
@@ -193,16 +194,32 @@ class CloudflareR2Service {
     return "$endpoint/$bucketName/$cleanKey?$canonicalQueryString&X-Amz-Signature=$signature";
   }
 
+  /// Optional Public Domain for Cloudflare R2 bucket (e.g. pub-xxxxxx.r2.dev or custom domain).
+  /// If set, direct public CDN URLs are used instead of presigned URLs or localhost bridge.
+  static const String publicDomain =
+      String.fromEnvironment('CLOUDFLARE_R2_PUBLIC_DOMAIN', defaultValue: '');
+
   /// Ensures any stored R2 URL has a fresh valid signature for display.
   String ensureDisplayableUrl(String? rawUrlOrKey) {
     if (rawUrlOrKey == null || rawUrlOrKey.trim().isEmpty) return '';
     final trimmed = rawUrlOrKey.trim();
 
-    // If it's an R2 URL or key, extract key and route via bridge on Web or presigned URL
+    // If it is already a direct bridge URL on Web, return it as-is (do not re-wrap)
+    if (kIsWeb && (trimmed.contains('127.0.0.1:8765/api/r2-image') || trimmed.contains('localhost:8765/api/r2-image'))) {
+      return trimmed;
+    }
+
     final key = extractObjectKey(trimmed);
     if (key != null && key.isNotEmpty) {
+      // If a public domain is enabled on Cloudflare R2, use fast direct CDN URL
+      if (publicDomain.isNotEmpty) {
+        final cleanBase = publicDomain.endsWith('/')
+            ? publicDomain.substring(0, publicDomain.length - 1)
+            : publicDomain;
+        return "$cleanBase/$key";
+      }
       if (kIsWeb) {
-        return "http://localhost:8765/api/r2-image?key=$key";
+        return "http://127.0.0.1:8765/api/r2-image?key=$key";
       }
       return generatePresignedGetUrl(key);
     }
@@ -210,12 +227,28 @@ class CloudflareR2Service {
     return trimmed;
   }
 
-  /// Extracts the object key from a full Cloudflare R2 URL or relative path
+  /// Extracts the object key from a full Cloudflare R2 URL, bridge URL, or relative path
   String? extractObjectKey(String urlOrKey) {
     final trimmed = urlOrKey.trim();
+    if (trimmed.isEmpty) return null;
+
+    // 1. If it's already a bridge URL with key param, extract clean key:
+    if (trimmed.contains('/api/r2-image')) {
+      try {
+        final uri = Uri.parse(trimmed);
+        final paramKey = uri.queryParameters['key'];
+        if (paramKey != null && paramKey.isNotEmpty) {
+          return paramKey.startsWith('/') ? paramKey.substring(1) : paramKey;
+        }
+      } catch (_) {}
+    }
+
+    // 2. If it's already a relative path:
     if (!trimmed.startsWith('http')) {
       return trimmed.startsWith('/') ? trimmed.substring(1) : trimmed;
     }
+
+    // 3. If it's a full URL:
     try {
       final uri = Uri.parse(trimmed);
       final segments = uri.pathSegments;
@@ -223,7 +256,18 @@ class CloudflareR2Service {
       if (bucketIdx != -1 && bucketIdx + 1 < segments.length) {
         return segments.sublist(bucketIdx + 1).join('/');
       }
-      return uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+      // If public domain or r2.dev host
+      if (uri.host.contains('r2.cloudflarestorage.com') ||
+          uri.host.contains('r2.dev') ||
+          (publicDomain.isNotEmpty && uri.host.contains(Uri.tryParse(publicDomain)?.host ?? ''))) {
+        return uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+      }
+      if (trimmed.contains('profiles/')) {
+        final idx = trimmed.indexOf('profiles/');
+        final endIdx = trimmed.indexOf('?', idx);
+        return endIdx != -1 ? trimmed.substring(idx, endIdx) : trimmed.substring(idx);
+      }
+      return null;
     } catch (_) {
       return null;
     }

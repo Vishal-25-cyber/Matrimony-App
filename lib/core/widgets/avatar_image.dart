@@ -75,6 +75,8 @@ class AvatarImage extends StatelessWidget {
                         width: size,
                         height: size,
                         fit: BoxFit.cover,
+                        cacheWidth: (size * 2).toInt(),
+                        cacheHeight: (size * 2).toInt(),
                         errorBuilder: (context, error, stackTrace) => Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
