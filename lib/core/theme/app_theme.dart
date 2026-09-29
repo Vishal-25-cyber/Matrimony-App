@@ -139,6 +139,24 @@ class AppTheme {
         labelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
         unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
       ),
+
+      // SnackBar Theme (Modern floating popup style)
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF4A0E1C),
+        elevation: 8,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
+        ),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 13,
+          fontWeight: FontWeight.w500,
+        ),
+        actionTextColor: const Color(0xFFF3E5AB),
+      ),
     );
   }
 }

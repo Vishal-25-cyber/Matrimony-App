@@ -211,14 +211,59 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                               ScaffoldMessenger.of(context).hideCurrentSnackBar();
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(
-                                    wasShortlisted
-                                        ? "${profile.name} விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது"
-                                        : "${profile.name} விருப்பப்பட்டியலில் சேர்க்கப்பட்டது! ✓ (Liked)",
+                                  content: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.15),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          wasShortlisted ? Icons.favorite_border_rounded : Icons.favorite_rounded,
+                                          color: const Color(0xFFF3E5AB),
+                                          size: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              profile.name,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            Text(
+                                              wasShortlisted
+                                                  ? "விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது"
+                                                  : "விருப்பப்பட்டியலில் சேர்க்கப்பட்டது! ✓",
+                                              style: const TextStyle(
+                                                fontSize: 11,
+                                                color: Color(0xFFEDE0D5),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  duration: const Duration(seconds: 2),
+                                  duration: const Duration(seconds: 3),
                                   behavior: SnackBarBehavior.floating,
-                                  backgroundColor: const Color(0xFF7A132B),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                    side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
+                                  ),
+                                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  elevation: 8,
+                                  backgroundColor: const Color(0xFF4A0E1C),
                                 ),
                               );
                             },

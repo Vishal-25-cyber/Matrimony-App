@@ -49,10 +49,16 @@ final String r2Endpoint = getEnv('CLOUDFLARE_R2_ENDPOINT', 'https://$r2AccountId
 final String r2PublicUrlPrefix = getEnv('CLOUDFLARE_R2_PUBLIC_URL_PREFIX', '');
 final String r2Host = Uri.parse(r2Endpoint).host;
 const String r2Region = "auto";
-final String mongoAtlasUri = getEnv(
-  'MONGODB_ATLAS_URI',
-  'mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true',
-);
+final String mongoAtlasUri = () {
+  var uri = getEnv(
+    'MONGODB_ATLAS_URI',
+    'mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true',
+  );
+  if (!uri.contains('safeAtlas=true')) {
+    uri += (uri.contains('?') ? '&' : '?') + 'safeAtlas=true';
+  }
+  return uri;
+}();
 
 // In-memory image cache for instant, zero-latency avatar rendering in Flutter Web
 final Map<String, List<int>> _imageCache = {};
@@ -358,13 +364,15 @@ void main() async {
   bool isConnecting = false;
 
   Future<Db?> getDb({bool forceReconnect = false}) async {
-    if (!forceReconnect && db != null && db!.state == State.open) {
+    final isAlive = db != null && db!.state == State.open && db!.isConnected && db!.masterConnection != null;
+    if (!forceReconnect && isAlive) {
       return db;
     }
     if (isConnecting) {
-      for (int i = 0; i < 20; i++) {
+      for (int i = 0; i < 25; i++) {
         await Future.delayed(const Duration(milliseconds: 100));
-        if (db != null && db!.state == State.open) return db;
+        final activeNow = db != null && db!.state == State.open && db!.isConnected && db!.masterConnection != null;
+        if (activeNow) return db;
         if (!isConnecting) break;
       }
     }
@@ -593,17 +601,23 @@ void main() async {
           key = cachedUser?['profileImageKey']?.toString() ?? '';
 
           if (key.isEmpty) {
-            var activeDb = await getDb();
-            if (activeDb != null) {
-              final userDoc = await activeDb.collection('users').findOne(
-                where.eq('phone', userId).or(where.eq('phone', cleanId)).or(where.eq('username', userId)),
-              );
-              key = userDoc?['profileImageKey']?.toString() ?? '';
-              if (key.isEmpty) {
-                final profDoc = await activeDb.collection('profiles').findOne(
-                  where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanId)),
+            try {
+              var activeDb = await getDb();
+              if (activeDb != null) {
+                final userDoc = await activeDb.collection('users').findOne(
+                  where.eq('phone', userId).or(where.eq('phone', cleanId)).or(where.eq('username', userId)),
                 );
-                key = profDoc?['profileImageKey']?.toString() ?? '';
+                key = userDoc?['profileImageKey']?.toString() ?? '';
+                if (key.isEmpty) {
+                  final profDoc = await activeDb.collection('profiles').findOne(
+                    where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanId)),
+                  );
+                  key = profDoc?['profileImageKey']?.toString() ?? '';
+                }
+              }
+            } catch (e) {
+              if (e.toString().contains('No master connection')) {
+                await getDb(forceReconnect: true);
               }
             }
           }
@@ -717,17 +731,27 @@ void main() async {
 
         var activeDb = await getDb();
         if (key.isEmpty && activeDb != null) {
-          final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
-          final uDoc = await activeDb.collection('users').findOne(
-            where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
-          );
-          key = uDoc?['profileImageKey']?.toString() ?? '';
-          if (key.isEmpty) {
-            final pDoc = await activeDb.collection('profiles').findOne(
-              where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+          try {
+            final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
+            final uDoc = await activeDb.collection('users').findOne(
+              where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
             );
-            key = pDoc?['profileImageKey']?.toString() ?? '';
+            key = uDoc?['profileImageKey']?.toString() ?? '';
+            if (key.isEmpty) {
+              final pDoc = await activeDb.collection('profiles').findOne(
+                where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+              );
+              key = pDoc?['profileImageKey']?.toString() ?? '';
+            }
+          } catch (e) {
+            if (e.toString().contains('No master connection')) {
+              await getDb(forceReconnect: true);
+            }
           }
+        }
+
+        if (key.isEmpty && userId.isNotEmpty) {
+          key = "$r2Prefix${userId.toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_avatar.jpg";
         }
 
         if (key.isNotEmpty) {
@@ -737,23 +761,25 @@ void main() async {
         }
 
         if (activeDb != null && userId.isNotEmpty) {
-          final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
-          final clearFields = {
-            'profileImageKey': null,
-            'profileImageUrl': null,
-            'r2ProfileImageUrl': null,
-            'hasCustomImage': false,
-            'updatedAt': DateTime.now().toIso8601String(),
-          };
-          await activeDb.collection('users').update(
-            where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
-            {r'$set': clearFields},
-          );
-          await activeDb.collection('profiles').update(
-            where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
-            {r'$set': clearFields},
-          );
-          print("✓ [Bridge] Photo metadata cleared from Atlas for user: $userId");
+          try {
+            final cleanPhone = userId.replaceAll(RegExp(r'\D'), '');
+            final clearFields = {
+              'profileImageKey': null,
+              'profileImageUrl': null,
+              'r2ProfileImageUrl': null,
+              'hasCustomImage': false,
+              'updatedAt': DateTime.now().toIso8601String(),
+            };
+            await activeDb.collection('users').update(
+              where.eq('phone', userId).or(where.eq('phone', cleanPhone)).or(where.eq('username', userId)),
+              {r'$set': clearFields},
+            );
+            await activeDb.collection('profiles').update(
+              where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanPhone)),
+              {r'$set': clearFields},
+            );
+            print("✓ [Bridge] Photo metadata cleared from Atlas for user: $userId");
+          } catch (_) {}
         }
 
         request.response.statusCode = HttpStatus.ok;

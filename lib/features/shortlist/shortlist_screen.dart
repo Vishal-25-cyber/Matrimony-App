@@ -1068,12 +1068,56 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                               ScaffoldMessenger.of(context).hideCurrentSnackBar();
                               ScaffoldMessenger.of(context).showSnackBar(
                                 SnackBar(
-                                  content: Text(
-                                    "$pName விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது",
-                                    style: const TextStyle(fontSize: 12.5),
+                                  content: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withValues(alpha: 0.15),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.favorite_border_rounded,
+                                          color: Color(0xFFF3E5AB),
+                                          size: 18,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              pName,
+                                              style: const TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.white,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            const Text(
+                                              "விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது",
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Color(0xFFEDE0D5),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
                                   ),
-                                  backgroundColor: const Color(0xFF580B23),
+                                  backgroundColor: const Color(0xFF4A0E1C),
                                   behavior: SnackBarBehavior.floating,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                    side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
+                                  ),
+                                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                  elevation: 8,
                                   duration: const Duration(seconds: 4),
                                   action: SnackBarAction(
                                     label: "மீட்டெடு (Undo)",
