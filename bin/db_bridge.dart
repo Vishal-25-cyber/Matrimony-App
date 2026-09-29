@@ -12,6 +12,9 @@ const String r2BucketName = "matrimony-profile-images";
 const String r2Host = "b535b7c908a09f10d27773b1b9536777.r2.cloudflarestorage.com";
 const String r2Region = "auto";
 
+// In-memory image cache for instant, zero-latency avatar rendering in Flutter Web
+final Map<String, List<int>> _imageCache = {};
+
 Future<bool> uploadToR2(String objectKey, List<int> imageBytes, String contentType) async {
   final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
   final now = DateTime.now().toUtc();
@@ -50,8 +53,10 @@ Future<bool> uploadToR2(String objectKey, List<int> imageBytes, String contentTy
         'Authorization': authorizationHeader,
       },
       body: imageBytes,
-    );
+    ).timeout(const Duration(seconds: 15));
+
     if (response.statusCode == 200 || response.statusCode == 204) {
+      _imageCache[cleanKey] = imageBytes;
       print("✓ [Bridge] Successfully uploaded to Cloudflare R2: $cleanKey (${imageBytes.length} bytes)");
       return true;
     } else {
@@ -104,38 +109,50 @@ String generateR2PresignedUrl(String objectKey, {int expiresInSeconds = 604800})
 
 void main() async {
   const uri = "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio";
-  final port = 8765;
+  const port = 8765;
 
   print("Starting MongoDB Atlas HTTP Web Bridge on port $port...");
   Db? db;
+  bool isConnecting = false;
 
   Future<Db?> getDb({bool forceReconnect = false}) async {
     if (!forceReconnect && db != null && db!.state == State.open && db!.isConnected) {
       return db;
     }
+    if (isConnecting) {
+      for (int i = 0; i < 20; i++) {
+        await Future.delayed(const Duration(milliseconds: 250));
+        if (db != null && db!.state == State.open && db!.isConnected) return db;
+        if (!isConnecting) break;
+      }
+    }
+    isConnecting = true;
     try {
       if (db != null) {
         try {
-          await db!.close();
+          await db!.close().timeout(const Duration(seconds: 2));
         } catch (_) {}
       }
       db = await Db.create(uri);
-      await db!.open();
+      await db!.open().timeout(const Duration(seconds: 8));
       print("✓ Bridge connected to MongoDB Atlas!");
       return db;
     } catch (e) {
       print("Bridge connection error: $e");
       return null;
+    } finally {
+      isConnecting = false;
     }
   }
 
-  // Pre-connect
-  await getDb();
+  // Pre-connect in background without blocking server bind
+  getDb().ignore();
 
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
   print("✓ MongoDB Atlas Bridge listening at http://127.0.0.1:$port");
 
-  await for (HttpRequest request in server) {
+  // Non-blocking concurrent request listener
+  server.listen((HttpRequest request) async {
     // Add CORS headers for Flutter Web
     request.response.headers.add('Access-Control-Allow-Origin', '*');
     request.response.headers.add('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
@@ -144,26 +161,150 @@ void main() async {
     if (request.method == 'OPTIONS') {
       request.response.statusCode = HttpStatus.ok;
       await request.response.close();
-      continue;
+      return;
     }
 
     final path = request.uri.path;
+
+    // Fast-path health check
+    if (path == '/api/health') {
+      final isDbUp = db != null && db!.state == State.open && db!.isConnected;
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode({
+        'status': 'ok',
+        'cluster': 'portfolio.mo5wnyq.mongodb.net',
+        'dbConnected': isDbUp,
+      }));
+      await request.response.close();
+      return;
+    }
+
+    // Cloudflare R2 Image Fetch / Proxy Endpoint with CORS for Web
+    if (path == '/api/r2-image' && request.method == 'GET') {
+      try {
+        final objectKey = request.uri.queryParameters['key'] ?? '';
+        if (objectKey.isEmpty) {
+          request.response.statusCode = HttpStatus.badRequest;
+          request.response.write(jsonEncode({'error': 'key query parameter is required'}));
+          await request.response.close();
+          return;
+        }
+
+        final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+        final mime = cleanKey.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
+        request.response.headers.contentType = ContentType.parse(mime);
+        request.response.headers.add('Cache-Control', 'public, max-age=86400');
+
+        // Check in-memory cache first (0ms response)
+        if (_imageCache.containsKey(cleanKey)) {
+          request.response.statusCode = HttpStatus.ok;
+          request.response.add(_imageCache[cleanKey]!);
+          await request.response.close();
+          return;
+        }
+
+        final presignedUrl = generateR2PresignedUrl(cleanKey, expiresInSeconds: 3600);
+        final r2Res = await http.get(Uri.parse(presignedUrl)).timeout(const Duration(seconds: 10));
+
+        if (r2Res.statusCode == 200) {
+          _imageCache[cleanKey] = r2Res.bodyBytes;
+          request.response.statusCode = HttpStatus.ok;
+          request.response.add(r2Res.bodyBytes);
+        } else {
+          request.response.statusCode = r2Res.statusCode;
+          request.response.write(jsonEncode({'error': 'Image not found in R2'}));
+        }
+      } catch (e) {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.write(jsonEncode({'error': e.toString()}));
+      }
+      await request.response.close();
+      return;
+    }
+
+    // Cloudflare R2 Image Upload Endpoint
+    if (path == '/api/r2-upload' && request.method == 'POST') {
+      try {
+        final bodyStr = await utf8.decoder.bind(request).join();
+        final data = jsonDecode(bodyStr) as Map<String, dynamic>;
+        final objectKey = data['objectKey']?.toString() ?? '';
+        final base64Image = data['imageBase64']?.toString() ?? '';
+        final contentType = data['contentType']?.toString() ?? 'image/jpeg';
+
+        if (objectKey.isEmpty || base64Image.isEmpty) {
+          request.response.statusCode = HttpStatus.badRequest;
+          request.response.write(jsonEncode({'error': 'objectKey and imageBase64 are required'}));
+          await request.response.close();
+          return;
+        }
+
+        final imageBytes = base64Decode(base64Image);
+        final uploadSuccess = await uploadToR2(objectKey, imageBytes, contentType);
+
+        if (uploadSuccess) {
+          final presignedUrl = generateR2PresignedUrl(objectKey);
+          final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
+          _imageCache[cleanKey] = imageBytes;
+
+          // Asynchronously sync new photo URL to MongoDB Atlas users & profiles
+          final userId = data['userId']?.toString() ?? '';
+          if (userId.isNotEmpty) {
+            getDb().then((activeDb) async {
+              if (activeDb == null) return;
+              try {
+                final cleanId = userId.replaceAll(RegExp(r'\D'), '');
+                final updateFields = {
+                  'profileImageUrl': presignedUrl,
+                  'r2ProfileImageUrl': presignedUrl,
+                  'hasCustomImage': true,
+                  'updatedAt': DateTime.now().toIso8601String(),
+                };
+                await activeDb.collection('users').update(
+                  where.eq('phone', userId).or(where.eq('phone', cleanId)).or(where.eq('username', userId)),
+                  {r'$set': updateFields},
+                );
+                await activeDb.collection('profiles').update(
+                  where.eq('id', userId).or(where.eq('phone', userId)).or(where.eq('phone', cleanId)),
+                  {r'$set': updateFields},
+                );
+                print("✓ [Bridge] Photo URL synced to Atlas user and profile: $userId");
+              } catch (e) {
+                print("⚠ [Bridge] Background photo sync error: $e");
+              }
+            }).ignore();
+          }
+
+          request.response.statusCode = HttpStatus.ok;
+          request.response.write(jsonEncode({
+            'success': true,
+            'objectKey': objectKey,
+            'url': presignedUrl,
+          }));
+        } else {
+          request.response.statusCode = HttpStatus.internalServerError;
+          request.response.write(jsonEncode({'error': 'Failed to upload to Cloudflare R2'}));
+        }
+      } catch (e) {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.write(jsonEncode({'error': e.toString()}));
+      }
+      await request.response.close();
+      return;
+    }
+
     try {
       var activeDb = await getDb();
       if (activeDb == null) {
         request.response.statusCode = HttpStatus.serviceUnavailable;
         request.response.write(jsonEncode({'error': 'MongoDB Atlas unavailable'}));
         await request.response.close();
-        continue;
+        return;
       }
 
-      if (path == '/api/health') {
-        request.response.statusCode = HttpStatus.ok;
-        request.response.write(jsonEncode({'status': 'ok', 'cluster': 'portfolio.mo5wnyq.mongodb.net'}));
-        await request.response.close();
-        continue;
-      }
-
+      // -------------------------------------------------------------
+      // USER COLLECTION ENDPOINTS
+      // -------------------------------------------------------------
       if (path == '/api/user' && request.method == 'POST') {
         final bodyStr = await utf8.decoder.bind(request).join();
         final data = jsonDecode(bodyStr) as Map<String, dynamic>;
@@ -191,10 +332,26 @@ void main() async {
           print("✓ [Bridge] New user inserted in Atlas: ${data['name']} ($phone / $username)");
         }
 
+        // Also cross-sync profileImageUrl to profiles collection if present
+        final imgUrl = data['profileImageUrl']?.toString() ?? data['r2ProfileImageUrl']?.toString();
+        if (imgUrl != null && imgUrl.isNotEmpty && phone.isNotEmpty) {
+          final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
+          activeDb.collection('profiles').update(
+            where.eq('phone', phone).or(where.eq('phone', cleanPhone)),
+            {
+              r'$set': {
+                'profileImageUrl': imgUrl,
+                'r2ProfileImageUrl': imgUrl,
+                'hasCustomImage': true,
+              }
+            },
+          ).ignore();
+        }
+
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
-        continue;
+        return;
       }
 
       if (path == '/api/user' && request.method == 'GET') {
@@ -224,17 +381,37 @@ void main() async {
               doc ??= await retryCol.findOne(where.eq('username', queryLower));
               doc ??= await retryCol.findOne(where.eq('email', queryLower));
             }
-          } else {
-            rethrow;
+          }
+        }
+
+        // Cross-check profiles collection if profileImageUrl is empty
+        if (doc != null) {
+          final rawImg = doc['profileImageUrl']?.toString() ?? doc['r2ProfileImageUrl']?.toString();
+          if (rawImg == null || rawImg.isEmpty) {
+            try {
+              final pDoc = await activeDb!.collection('profiles').findOne(
+                where.eq('phone', clean.isNotEmpty ? clean : query),
+              );
+              final pImg = pDoc?['profileImageUrl']?.toString() ?? pDoc?['r2ProfileImageUrl']?.toString();
+              if (pImg != null && pImg.isNotEmpty) {
+                doc['profileImageUrl'] = pImg;
+                doc['r2ProfileImageUrl'] = pImg;
+                doc['hasCustomImage'] = true;
+              }
+            } catch (_) {}
           }
         }
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'user': doc}));
         await request.response.close();
-        continue;
+        return;
       }
 
+      // -------------------------------------------------------------
+      // PROFILE COLLECTION ENDPOINTS
+      // -------------------------------------------------------------
       if (path == '/api/profile' && request.method == 'POST') {
         final bodyStr = await utf8.decoder.bind(request).join();
         final data = jsonDecode(bodyStr) as Map<String, dynamic>;
@@ -266,7 +443,7 @@ void main() async {
           print("✓ [Bridge] New profile inserted in Atlas: ${data['name']} ($id / $phone)");
         }
 
-        // Also sync users login collection with updated phone & name
+        // Also cross-sync users login collection with updated phone, name & image
         if (phone.isNotEmpty || email.isNotEmpty) {
           try {
             final usersCol = activeDb.collection('users');
@@ -277,13 +454,15 @@ void main() async {
             if (userDoc == null && phone.isNotEmpty) {
               userDoc = await usersCol.findOne(where.eq('phone', phone));
             }
+            final imgUrl = data['profileImageUrl']?.toString() ?? data['r2ProfileImageUrl']?.toString();
             if (userDoc != null) {
               await usersCol.update(where.id(userDoc['_id']), {
                 r'$set': {
                   if (name.isNotEmpty) 'name': name,
                   if (phone.isNotEmpty) 'phone': phone,
-                  if (phone.isNotEmpty) 'username': phone,
                   if (email.isNotEmpty) 'email': email,
+                  if (imgUrl != null && imgUrl.isNotEmpty) 'profileImageUrl': imgUrl,
+                  if (imgUrl != null && imgUrl.isNotEmpty) 'hasCustomImage': true,
                   'updatedAt': DateTime.now().toIso8601String(),
                 }
               });
@@ -295,7 +474,7 @@ void main() async {
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
-        continue;
+        return;
       }
 
       if (path == '/api/profile' && request.method == 'GET') {
@@ -321,19 +500,38 @@ void main() async {
                 doc ??= await retryCol.findOne(where.eq('phone', query));
               }
               doc ??= await retryCol.findOne(where.eq('id', query));
-              doc ??= await retryCol.findOne(where.match('name', '^$query\$', caseInsensitive: true));
             }
-          } else {
-            rethrow;
+          }
+        }
+
+        // Cross-check users collection if profileImageUrl is empty
+        if (doc != null) {
+          final rawImg = doc['profileImageUrl']?.toString() ?? doc['r2ProfileImageUrl']?.toString();
+          if (rawImg == null || rawImg.isEmpty) {
+            try {
+              final uDoc = await activeDb!.collection('users').findOne(
+                where.eq('phone', clean.isNotEmpty ? clean : query),
+              );
+              final uImg = uDoc?['profileImageUrl']?.toString() ?? uDoc?['r2ProfileImageUrl']?.toString();
+              if (uImg != null && uImg.isNotEmpty) {
+                doc['profileImageUrl'] = uImg;
+                doc['r2ProfileImageUrl'] = uImg;
+                doc['hasCustomImage'] = true;
+              }
+            } catch (_) {}
           }
         }
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'profile': doc}));
         await request.response.close();
-        continue;
+        return;
       }
 
+      // -------------------------------------------------------------
+      // SHORTLIST COLLECTION ENDPOINTS
+      // -------------------------------------------------------------
       if (path == '/api/shortlist' && request.method == 'GET') {
         final userId = request.uri.queryParameters['userId'] ?? '';
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
@@ -353,9 +551,10 @@ void main() async {
         }
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'shortlist': doc}));
         await request.response.close();
-        continue;
+        return;
       }
 
       if (path == '/api/shortlist' && request.method == 'POST') {
@@ -375,9 +574,12 @@ void main() async {
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
-        continue;
+        return;
       }
 
+      // -------------------------------------------------------------
+      // PAYMENTS COLLECTION ENDPOINTS
+      // -------------------------------------------------------------
       if (path == '/api/payments' && request.method == 'GET') {
         final userId = request.uri.queryParameters['userId'] ?? '';
         final userPhone = request.uri.queryParameters['userPhone'] ?? '';
@@ -398,9 +600,10 @@ void main() async {
         }
 
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'payments': docs}));
         await request.response.close();
-        continue;
+        return;
       }
 
       if (path == '/api/payment' && request.method == 'POST') {
@@ -429,16 +632,17 @@ void main() async {
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true}));
         await request.response.close();
-        continue;
+        return;
       }
 
       if (path == '/api/profiles' && request.method == 'GET') {
         final profilesCol = activeDb.collection('profiles');
         final docs = await profilesCol.find().toList();
         request.response.statusCode = HttpStatus.ok;
+        request.response.headers.contentType = ContentType.json;
         request.response.write(jsonEncode({'success': true, 'profiles': docs}));
         await request.response.close();
-        continue;
+        return;
       }
 
       // DELETE Profile from MongoDB Atlas
@@ -458,10 +662,9 @@ void main() async {
           } catch (_) {}
         }
 
-        final profilesCol = activeDb.collection('profiles');
         final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
-
-        var selector = where;
+        final profilesCol = activeDb.collection('profiles');
+        dynamic selector;
         if (id.isNotEmpty && cleanPhone.isNotEmpty) {
           selector = where.eq('id', id).or(where.eq('phone', cleanPhone)).or(where.eq('phone', phone));
         } else if (id.isNotEmpty) {
@@ -472,7 +675,7 @@ void main() async {
           request.response.statusCode = HttpStatus.badRequest;
           request.response.write(jsonEncode({'error': 'Profile id or phone required for deletion'}));
           await request.response.close();
-          continue;
+          return;
         }
 
         final result = await profilesCol.remove(selector);
@@ -495,91 +698,20 @@ void main() async {
         request.response.statusCode = HttpStatus.ok;
         request.response.write(jsonEncode({'success': true, 'deleted': id.isNotEmpty ? id : phone}));
         await request.response.close();
-        continue;
+        return;
       }
 
-      // Cloudflare R2 Image Upload Endpoint
-      if (path == '/api/r2-upload' && request.method == 'POST') {
-        try {
-          final bodyStr = await utf8.decoder.bind(request).join();
-          final data = jsonDecode(bodyStr) as Map<String, dynamic>;
-          final objectKey = data['objectKey']?.toString() ?? '';
-          final base64Image = data['imageBase64']?.toString() ?? '';
-          final contentType = data['contentType']?.toString() ?? 'image/jpeg';
-
-          if (objectKey.isEmpty || base64Image.isEmpty) {
-            request.response.statusCode = HttpStatus.badRequest;
-            request.response.write(jsonEncode({'error': 'objectKey and imageBase64 are required'}));
-            await request.response.close();
-            continue;
-          }
-
-          final imageBytes = base64Decode(base64Image);
-          final uploadSuccess = await uploadToR2(objectKey, imageBytes, contentType);
-
-          if (uploadSuccess) {
-            final presignedUrl = generateR2PresignedUrl(objectKey);
-            request.response.statusCode = HttpStatus.ok;
-            request.response.write(jsonEncode({
-              'success': true,
-              'objectKey': objectKey,
-              'url': presignedUrl,
-            }));
-          } else {
-            request.response.statusCode = HttpStatus.internalServerError;
-            request.response.write(jsonEncode({'error': 'Failed to upload to Cloudflare R2'}));
-          }
-        } catch (e) {
-          request.response.statusCode = HttpStatus.internalServerError;
-          request.response.write(jsonEncode({'error': e.toString()}));
-        }
-        await request.response.close();
-        continue;
-      }
-
-      // Cloudflare R2 Image Fetch / Proxy Endpoint with CORS for Web
-      if (path == '/api/r2-image' && request.method == 'GET') {
-        try {
-          final objectKey = request.uri.queryParameters['key'] ?? '';
-          if (objectKey.isEmpty) {
-            request.response.statusCode = HttpStatus.badRequest;
-            request.response.write(jsonEncode({'error': 'key query parameter is required'}));
-            await request.response.close();
-            continue;
-          }
-
-          final cleanKey = objectKey.startsWith('/') ? objectKey.substring(1) : objectKey;
-          final presignedUrl = generateR2PresignedUrl(cleanKey, expiresInSeconds: 3600);
-          final r2Res = await http.get(Uri.parse(presignedUrl)).timeout(const Duration(seconds: 10));
-
-          if (r2Res.statusCode == 200) {
-            final mime = cleanKey.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg';
-            request.response.headers.contentType = ContentType.parse(mime);
-            request.response.headers.add('Cache-Control', 'public, max-age=86400');
-            request.response.statusCode = HttpStatus.ok;
-            request.response.add(r2Res.bodyBytes);
-          } else {
-            request.response.statusCode = r2Res.statusCode;
-            request.response.write(jsonEncode({'error': 'Image not found in R2'}));
-          }
-        } catch (e) {
-          request.response.statusCode = HttpStatus.internalServerError;
-          request.response.write(jsonEncode({'error': e.toString()}));
-        }
-        await request.response.close();
-        continue;
-      }
-
+      // Default 404
       request.response.statusCode = HttpStatus.notFound;
-      request.response.write(jsonEncode({'error': 'Not found'}));
+      request.response.write(jsonEncode({'error': 'Not found', 'path': path}));
       await request.response.close();
     } catch (e) {
-      if (e.toString().contains('No master connection') || e.toString().contains('closed')) {
-        await getDb(forceReconnect: true);
-      }
-      request.response.statusCode = HttpStatus.internalServerError;
-      request.response.write(jsonEncode({'error': e.toString()}));
-      await request.response.close();
+      print("Bridge request error: $e");
+      try {
+        request.response.statusCode = HttpStatus.internalServerError;
+        request.response.write(jsonEncode({'error': e.toString()}));
+        await request.response.close();
+      } catch (_) {}
     }
-  }
+  });
 }

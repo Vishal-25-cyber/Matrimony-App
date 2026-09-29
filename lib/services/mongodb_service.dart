@@ -51,6 +51,11 @@ class MongoDBService {
   final Map<String, Map<String, dynamic>> _databaseCache = {};
   Map<String, Map<String, dynamic>> get databaseCache => Map.unmodifiable(_databaseCache);
 
+  /// Put a document into local memory cache
+  void putInCache(String key, Map<String, dynamic> doc) {
+    _databaseCache[key] = doc;
+  }
+
   /// Clear database cache for test resets
   void clearDatabaseCache() {
     _databaseCache.clear();
@@ -190,7 +195,7 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/profile'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(updatedDoc),
-        ).timeout(const Duration(seconds: 3));
+        ).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           _isConnected = true;
           return true;
@@ -276,7 +281,7 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/user'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(updatedDoc),
-        ).timeout(const Duration(seconds: 3));
+        ).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           _isConnected = true;
           return true;
@@ -341,7 +346,7 @@ class MongoDBService {
       try {
         final res = await http.get(
           Uri.parse('$webBridgeUrl/api/profile?query=$identifier'),
-        ).timeout(const Duration(milliseconds: 1500));
+        ).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['profile'] != null) {
@@ -406,7 +411,7 @@ class MongoDBService {
       try {
         final res = await http.get(
           Uri.parse('$webBridgeUrl/api/user?query=$phoneOrUsernameOrEmail'),
-        ).timeout(const Duration(milliseconds: 1500));
+        ).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['user'] != null) {
@@ -593,7 +598,7 @@ class MongoDBService {
     if (kIsWeb) {
       try {
         final uri = Uri.parse('$webBridgeUrl/api/payments?userId=${userId ?? ''}&userPhone=$cleanPhone');
-        final res = await http.get(uri).timeout(const Duration(milliseconds: 1500));
+        final res = await http.get(uri).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['payments'] is List) {
@@ -653,7 +658,7 @@ class MongoDBService {
     if (kIsWeb) {
       try {
         final uri = Uri.parse('$webBridgeUrl/api/shortlist?userId=$userId&userPhone=$cleanPhone');
-        final res = await http.get(uri).timeout(const Duration(milliseconds: 1500));
+        final res = await http.get(uri).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['shortlist'] != null) {
@@ -712,7 +717,7 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/shortlist'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(doc),
-        ).timeout(const Duration(seconds: 3));
+        ).timeout(const Duration(seconds: 6));
       } catch (_) {}
       return true;
     }

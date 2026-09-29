@@ -29,6 +29,18 @@ class MyProfileScreen extends StatefulWidget {
 class _MyProfileScreenState extends State<MyProfileScreen> {
   bool _isUploadingPhoto = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // Ensure latest profile data and Cloudflare R2 photo from Atlas are synced
+    final authUser = AuthService().currentUser;
+    if (authUser != null) {
+      widget.mockData.syncWithAuthAsync(authUser).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
   Future<void> _handleDirectPhotoPick() async {
     final result = await pickProfileImage();
     if (result != null) {

@@ -117,15 +117,17 @@ class _LoginScreenState extends State<LoginScreen> {
       // Immediate synchronous sync so current user profile is populated instantly
       MockDataService().syncWithAuth(result.user);
 
+      // Fetch fresh Atlas profile, avatar image, shortlists, and payments before navigating
+      try {
+        await MockDataService().syncWithAuthAsync(result.user).timeout(const Duration(seconds: 4));
+      } catch (_) {}
+
       if (!mounted) return;
 
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
       );
-
-      // Background async sync in case any fresh profile updates exist in DB
-      MockDataService().syncWithAuthAsync(result.user).ignore();
     } else {
       setState(() {
         _loginErrorMessage = result.message;

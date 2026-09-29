@@ -24,6 +24,17 @@ class ShortlistScreen extends StatefulWidget {
 }
 
 class _ShortlistScreenState extends State<ShortlistScreen> {
+  @override
+  void initState() {
+    super.initState();
+    final authUser = AuthService().currentUser;
+    if (authUser != null) {
+      widget.mockData.syncWithAuthAsync(authUser).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
   // Opens the QR Payment Dialog / BottomSheet
   void _openPaymentDialog(BuildContext context, List<ProfileModel> profilesToUnlock, double totalAmount) {
     final nameController = TextEditingController(text: widget.mockData.currentUser.name);

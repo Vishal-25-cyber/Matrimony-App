@@ -20,6 +20,7 @@ class MockDataService extends ChangeNotifier {
     _instance = null;
     MongoDBService().clearDatabaseCache();
     CloudflareR2Service.isTestMode = true;
+    AuthService().logout();
   }
   MockDataService._internal() {
     AuthService().addListener(_syncFromAuth);
@@ -101,29 +102,45 @@ class MockDataService extends ChangeNotifier {
       return;
     }
 
-    final effectiveImageBytes = authUser.imageBytes ?? currentUser.imageBytes;
-    final effectiveImageUrl = authUser.profileImageUrl ?? currentUser.profileImageUrl;
-
-    final gLower = authUser.gender.toLowerCase().trim();
-    // If the account specifies 'Searching for Bride' or 'groom' or 'male', the user is a Groom (Male)
-    // If the account specifies 'Searching for Groom' or 'bride' or 'female', the user is a Bride (Female)
-    final bool isUserBride = gLower.contains('searching for groom') ||
-        (!gLower.contains('searching for bride') && (gLower == 'bride' || gLower.contains('female')));
-    final String resolvedGender = isUserBride ? "Bride" : "Groom";
-
     final cleanPhone = authUser.phone.replaceAll(RegExp(r'\D'), '');
     final userId = "PM-${cleanPhone.length >= 4 ? cleanPhone.substring(cleanPhone.length - 4) : '1000'}";
 
     // 1. Check if this exact user already has a saved profile in MongoDB cache / DB
     final cache = MongoDBService().databaseCache;
+    final cachedUser = cleanPhone.isNotEmpty
+        ? (cache['user_phone_$cleanPhone'] ?? cache['user_phone_${authUser.phone}'])
+        : null;
+
     final cachedProfile = cleanPhone.isNotEmpty
         ? (cache['profile_phone_$cleanPhone'] ??
            cache['profile_phone_${authUser.phone}'] ??
            cache['profile_id_$userId'])
         : cache['profile_id_$userId'];
 
+    final rawDbImg = cachedUser?['profileImageUrl']?.toString() ??
+        cachedUser?['r2ProfileImageUrl']?.toString() ??
+        cachedProfile?['profileImageUrl']?.toString() ??
+        cachedProfile?['r2ProfileImageUrl']?.toString();
+
+    final effectiveImageBytes = authUser.imageBytes ?? currentUser.imageBytes;
+    final effectiveImageUrl = (authUser.profileImageUrl != null && authUser.profileImageUrl!.isNotEmpty)
+        ? authUser.profileImageUrl
+        : ((rawDbImg != null && rawDbImg.isNotEmpty)
+            ? CloudflareR2Service().ensureDisplayableUrl(rawDbImg)
+            : (currentUser.profileImageUrl != null && currentUser.profileImageUrl!.isNotEmpty
+                ? currentUser.profileImageUrl
+                : null));
+
+    final gLower = authUser.gender.toLowerCase().trim();
+    final bool isUserBride = gLower.contains('searching for groom') ||
+        (!gLower.contains('searching for bride') && (gLower == 'bride' || gLower.contains('female')));
+    final String resolvedGender = isUserBride ? "Bride" : "Groom";
+
     if (cachedProfile != null) {
       final loaded = ProfileModel.fromMap(cachedProfile);
+      final finalImg = effectiveImageUrl ?? (loaded.profileImageUrl != null && loaded.profileImageUrl!.isNotEmpty
+          ? CloudflareR2Service().ensureDisplayableUrl(loaded.profileImageUrl)
+          : null);
       currentUser = loaded.copyWith(
         id: loaded.id.isNotEmpty ? loaded.id : userId,
         name: authUser.name.isNotEmpty ? authUser.name : loaded.name,
@@ -133,7 +150,7 @@ class MockDataService extends ChangeNotifier {
         email: authUser.email.isNotEmpty ? authUser.email : loaded.email,
         gender: resolvedGender,
         imageBytes: effectiveImageBytes ?? loaded.imageBytes,
-        profileImageUrl: effectiveImageUrl ?? loaded.profileImageUrl,
+        profileImageUrl: finalImg,
       );
     } else {
       // 2. Check if the user's phone strictly matches a pre-existing profile in the catalog
@@ -325,18 +342,39 @@ class MockDataService extends ChangeNotifier {
     final cleanPhone = authUser.phone.replaceAll(RegExp(r'\D'), '');
     final userId = "PM-${cleanPhone.length >= 4 ? cleanPhone.substring(cleanPhone.length - 4) : '1000'}";
 
-    final cache = MongoDBService().databaseCache;
-    if (!cache.containsKey('profile_phone_$cleanPhone') &&
-        !cache.containsKey('profile_phone_${authUser.phone}') &&
-        !cache.containsKey('profile_id_$userId')) {
-      final dbDoc = await MongoDBService().getProfileByIdOrPhone(cleanPhone.isNotEmpty ? cleanPhone : userId);
-      if (dbDoc != null) {
-        if (cleanPhone.isNotEmpty) cache['profile_phone_$cleanPhone'] = dbDoc;
-        cache['profile_id_$userId'] = dbDoc;
+    // 1. Fetch user account from Atlas (contains profileImageUrl)
+    final userDoc = await MongoDBService().getUserAccount(cleanPhone.isNotEmpty ? cleanPhone : authUser.username);
+    // 2. Fetch profile from Atlas
+    final dbDoc = await MongoDBService().getProfileByIdOrPhone(cleanPhone.isNotEmpty ? cleanPhone : userId);
+
+    final rawImg = userDoc?['profileImageUrl']?.toString() ??
+        userDoc?['r2ProfileImageUrl']?.toString() ??
+        dbDoc?['profileImageUrl']?.toString() ??
+        dbDoc?['r2ProfileImageUrl']?.toString();
+
+    if (rawImg != null && rawImg.isNotEmpty) {
+      final displayUrl = CloudflareR2Service().ensureDisplayableUrl(rawImg);
+      authUser = authUser.copyWith(profileImageUrl: displayUrl);
+      AuthService().updateCurrentUserAccount(
+        name: authUser.name,
+        phone: authUser.phone,
+        email: authUser.email,
+        gender: authUser.gender,
+        profileImageUrl: displayUrl,
+      );
+    }
+
+    if (dbDoc != null) {
+      if (cleanPhone.isNotEmpty) {
+        MongoDBService().putInCache('profile_phone_$cleanPhone', dbDoc);
       }
+      MongoDBService().putInCache('profile_id_$userId', dbDoc);
     }
 
     syncWithAuth(authUser);
+
+    // 3. Load shortlists and payments from Atlas
+    await _loadShortlistAndPaymentsFromAtlasAsync(userId, cleanPhone);
   }
 
   // Current logged in user profile
