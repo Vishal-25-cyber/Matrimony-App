@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../profiles/profile_details_screen.dart';
 import '../../core/widgets/horoscope_certificate_dialog.dart';
 import '../../core/utils/navigation_helper.dart';
+import '../../services/cloudflare_r2_service.dart';
 
 class ShortlistScreen extends StatefulWidget {
   final MockDataService mockData;
@@ -24,13 +25,28 @@ class ShortlistScreen extends StatefulWidget {
 }
 
 class _ShortlistScreenState extends State<ShortlistScreen> {
+  bool _isLoading = false;
+
   @override
   void initState() {
     super.initState();
     final authUser = AuthService().currentUser;
     if (authUser != null) {
+      if (widget.mockData.shortlistedProfiles.isEmpty) {
+        _isLoading = true;
+      }
       widget.mockData.syncWithAuthAsync(authUser).then((_) {
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }).catchError((_) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       });
     }
   }
@@ -576,8 +592,22 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
               ],
             ),
           ),
-          body: shortlisted.isEmpty
-              ? Center(
+          body: _isLoading && shortlisted.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      CircularProgressIndicator(color: Color(0xFF7A132B)),
+                      SizedBox(height: 16),
+                      Text(
+                        "வரன்கள் ஏற்றப்படுகிறது... / Loading Liked Profiles...",
+                        style: TextStyle(fontSize: 13, color: Color(0xFF6B585C), fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                )
+              : shortlisted.isEmpty
+                  ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
@@ -981,9 +1011,9 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                         border: Border.all(color: const Color(0xFFD4AF37), width: 1.5),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: (profile.imageAsset != null && profile.imageAsset!.isNotEmpty)
-                          ? Image.asset(
-                              profile.imageAsset!,
+                      child: (profile.profileImageUrl != null && profile.profileImageUrl!.trim().isNotEmpty)
+                          ? Image.network(
+                              CloudflareR2Service().ensureDisplayableUrl(profile.profileImageUrl!),
                               fit: BoxFit.cover,
                               errorBuilder: (_, _, _) => Icon(
                                 profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
@@ -991,11 +1021,21 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                                 size: 30,
                               ),
                             )
-                          : Icon(
-                              profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
-                              color: const Color(0xFF7A132B),
-                              size: 30,
-                            ),
+                          : (profile.imageAsset != null && profile.imageAsset!.isNotEmpty)
+                              ? Image.asset(
+                                  profile.imageAsset!,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => Icon(
+                                    profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
+                                    color: const Color(0xFF7A132B),
+                                    size: 30,
+                                  ),
+                                )
+                              : Icon(
+                                  profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
+                                  color: const Color(0xFF7A132B),
+                                  size: 30,
+                                ),
                     ),
                   ),
                 ),

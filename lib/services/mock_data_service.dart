@@ -227,15 +227,25 @@ class MockDataService extends ChangeNotifier {
     // 4. Load shortlist / likes strictly for THIS user alone
     final cachedShortlist = MongoDBService().databaseCache['shortlist_${currentUser.id}'] ??
         (cleanPhone.isNotEmpty ? MongoDBService().databaseCache['shortlist_$cleanPhone'] : null);
-    if (cachedShortlist != null && cachedShortlist['profileIds'] is List) {
-      final ids = Set<String>.from((cachedShortlist['profileIds'] as List).map((e) => e.toString()));
+    final approvedIds = approvedPaymentProfileIds;
+    if (cachedShortlist != null) {
+      final rawIds = cachedShortlist['profileIds'];
+      final List<String> profileIdsList = (rawIds is List)
+          ? rawIds.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+          : (rawIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
+      final ids = Set<String>.from(profileIdsList);
       for (var p in _profiles) {
-        p.isShortlisted = ids.contains(p.id);
+        p.isShortlisted = ids.contains(p.id) || approvedIds.contains(p.id);
       }
     } else {
       // Check if user is the same user or if we should preserve current session shortlist
       final isSameUser = cleanPhone.isNotEmpty && currentUser.phone.replaceAll(RegExp(r'\D'), '') == cleanPhone;
       if (isSameUser) {
+        for (var p in _profiles) {
+          if (approvedIds.contains(p.id)) {
+            p.isShortlisted = true;
+          }
+        }
         final currentLiked = _profiles.where((p) => p.isShortlisted).map((p) => p.id).toList();
         if (currentLiked.isNotEmpty) {
           MongoDBService().saveShortlist(
@@ -247,7 +257,7 @@ class MockDataService extends ChangeNotifier {
       } else {
         // Different user account without a cached shortlist
         for (var p in _profiles) {
-          p.isShortlisted = false;
+          p.isShortlisted = approvedIds.contains(p.id);
         }
       }
     }
@@ -262,24 +272,7 @@ class MockDataService extends ChangeNotifier {
   /// Asynchronously fetch saved shortlist and payment requests from MongoDB Atlas
   Future<void> _loadShortlistAndPaymentsFromAtlasAsync(String userId, String cleanPhone) async {
     try {
-      // 1. Fetch shortlist from Atlas
-      final doc = await MongoDBService().getShortlist(userId, userPhone: cleanPhone);
-      if (doc != null && doc['profileIds'] is List) {
-        final ids = Set<String>.from((doc['profileIds'] as List).map((e) => e.toString()));
-        bool changed = false;
-        for (var p in _profiles) {
-          final shouldBeLiked = ids.contains(p.id);
-          if (p.isShortlisted != shouldBeLiked) {
-            p.isShortlisted = shouldBeLiked;
-            changed = true;
-          }
-        }
-        if (changed) {
-          notifyListeners();
-        }
-      }
-
-      // 2. Fetch payments from Atlas
+      // 1. Fetch payments from Atlas first so approved contacts are known
       final payments = await MongoDBService().getPaymentRequests(userId: userId, userPhone: cleanPhone);
       if (payments.isNotEmpty) {
         bool paymentsChanged = false;
@@ -289,12 +282,12 @@ class MockDataService extends ChangeNotifier {
           final existingIdx = _paymentRequests.indexWhere((r) => r.id == id);
           final rawProfileIds = pMap['profileIds'];
           final List<String> profileIdsList = (rawProfileIds is List)
-              ? rawProfileIds.map((e) => e.toString()).toList()
-              : (rawProfileIds?.toString().split(RegExp(r'\s+')) ?? []);
+              ? rawProfileIds.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+              : (rawProfileIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
           final rawProfileNames = pMap['profileNames'];
           final List<String> profileNamesList = (rawProfileNames is List)
-              ? rawProfileNames.map((e) => e.toString()).toList()
-              : (rawProfileNames?.toString().split(',') ?? []);
+              ? rawProfileNames.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+              : (rawProfileNames?.toString().split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() ?? []);
 
           final reqModel = PaymentRequestModel(
             id: id,
@@ -322,6 +315,7 @@ class MockDataService extends ChangeNotifier {
               if (pIdx != -1) {
                 _profiles[pIdx].isContactUnlocked = true;
                 _profiles[pIdx].isHoroscopeUnlocked = true;
+                _profiles[pIdx].isShortlisted = true;
               }
             }
           }
@@ -329,6 +323,27 @@ class MockDataService extends ChangeNotifier {
         if (paymentsChanged) {
           notifyListeners();
         }
+      }
+
+      // 2. Fetch shortlist from Atlas
+      final doc = await MongoDBService().getShortlist(userId, userPhone: cleanPhone);
+      final rawIds = doc?['profileIds'];
+      final List<String> profileIdsList = (rawIds is List)
+          ? rawIds.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+          : (rawIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
+      final ids = Set<String>.from(profileIdsList);
+      final approved = approvedPaymentProfileIds;
+
+      bool changed = false;
+      for (var p in _profiles) {
+        final shouldBeLiked = ids.contains(p.id) || approved.contains(p.id);
+        if (p.isShortlisted != shouldBeLiked) {
+          p.isShortlisted = shouldBeLiked;
+          changed = true;
+        }
+      }
+      if (changed) {
+        notifyListeners();
       }
     } catch (_) {}
   }
@@ -1794,12 +1809,14 @@ class MockDataService extends ChangeNotifier {
           final existingIdx = _profiles.indexWhere((p) => p.id == id);
           final p = ProfileModel.fromMap(doc);
           if (existingIdx != -1) {
-            // Keep unlocked contact state if unlocked in memory or Atlas
+            // Keep unlocked contact state and shortlist state if present in memory or Atlas
             final wasUnlocked = _profiles[existingIdx].isContactUnlocked;
             final wasHoroscopeUnlocked = _profiles[existingIdx].isHoroscopeUnlocked;
+            final wasShortlisted = _profiles[existingIdx].isShortlisted;
             _profiles[existingIdx] = p.copyWith(
               isContactUnlocked: wasUnlocked || p.isContactUnlocked,
               isHoroscopeUnlocked: wasHoroscopeUnlocked || p.isHoroscopeUnlocked,
+              isShortlisted: wasShortlisted || p.isShortlisted,
             );
           } else {
             _profiles.insert(0, p);
