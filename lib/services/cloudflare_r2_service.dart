@@ -149,7 +149,7 @@ class CloudflareR2Service {
     }
 
     if (!uploadedSuccessfully && !isTestMode) {
-      throw Exception("Cloudflare R2-ல் படத்தை பதிவேற்ற முடியவில்லை. Web Bridge (port 8765) இயக்கத்தில் உள்ளதா என சரிபார்க்கவும்.");
+      throw Exception("படத்தைப் பதிவேற்ற முடியவில்லை. மீண்டும் முயற்சிக்கவும் / Unable to upload photo. Please try again.");
     }
 
     return generatePresignedGetUrl(objectKey);

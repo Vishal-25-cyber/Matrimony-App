@@ -181,7 +181,7 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("✓ Photo successfully uploaded to Cloudflare R2 (matrimony-profile-images)"),
+            content: Text("✓ புகைப்படம் வெற்றிகரமாக பதிவேற்றப்பட்டது! / Photo uploaded successfully!"),
             backgroundColor: Color(0xFF2E7D32),
           ),
         );
@@ -244,8 +244,8 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
                 child: const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("✓ Cloudflare R2 Storage: Connected", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
-                    Text("✓ MongoDB Database: Record Synced", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
+                    Text("✓ Cloud Storage: Connected", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
+                    Text("✓ Database: Record Synced", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2E7D32))),
                   ],
                 ),
               ),
@@ -688,7 +688,7 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
           const Text("புகைப்படம் பதிவேற்றம் / Upload Photo", style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF7A132B))),
           const SizedBox(height: 6),
           const Text(
-            "Connected directly to Cloudflare R2 bucket: matrimony-profile-images",
+            "பாதுகாப்பான மேகக்கணி சேமிப்பகம் / Secure Cloud Storage",
             style: TextStyle(fontSize: 10.5, color: Color(0xFF2E7D32), fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 16),
@@ -726,7 +726,7 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
               icon: _isUploadingToR2
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Icon(Icons.cloud_upload_rounded),
-              label: Text(_isUploadingToR2 ? "Uploading to Cloudflare R2..." : "Upload to Cloudflare R2"),
+              label: Text(_isUploadingToR2 ? "புகைப்படம் பதிவேற்றப்படுகிறது... / Uploading..." : "புகைப்படம் பதிவேற்றவும் / Upload Photo"),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFF7A132B),
                 foregroundColor: Colors.white,
@@ -749,7 +749,7 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
-                      "R2 URL: ${_uploadedImageUrl!}",
+                      "Photo URL: ${_uploadedImageUrl!}",
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 9.5, color: Color(0xFF2E7D32)),
@@ -784,7 +784,7 @@ class _RegisterHoroscopeScreenState extends State<RegisterHoroscopeScreen> {
           _buildSummaryRow("நட்சத்திரம் / Star", _selectedStar),
           _buildSummaryRow("ராசி / Rasi", _selectedRasi),
           _buildSummaryRow("கோத்திரம் / Gothram", _gothramController.text),
-          _buildSummaryRow("Cloudflare R2 Image", _uploadedImageUrl != null ? "Uploaded ✓" : "Pending"),
+          _buildSummaryRow("சுயவிவரப் படம் / Photo", _uploadedImageUrl != null ? "Uploaded ✓" : "Pending"),
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.all(10),

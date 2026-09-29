@@ -161,29 +161,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             SnackBar(
               content: Row(
                 children: [
-                  const Icon(Icons.cloud_done_rounded, color: Colors.white, size: 22),
+                  const Icon(Icons.check_circle_rounded, color: Colors.white, size: 22),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          '${result.fileName} Cloudflare R2-ல் சேமிக்கப்பட்டது! ✓',
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                        ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'Bucket: matrimony-profile-images / profiles/',
-                          style: TextStyle(color: Color(0xFFF3E5AB), fontSize: 11),
-                        ),
-                      ],
+                    child: Text(
+                      '${result.fileName} வெற்றிகரமாக சேமிக்கப்பட்டது! ✓',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),
                 ],
               ),
               backgroundColor: const Color(0xFF1B6B38),
-              duration: const Duration(seconds: 4),
+              duration: const Duration(seconds: 3),
               behavior: SnackBarBehavior.floating,
             ),
           );
@@ -193,7 +182,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Cloudflare R2 பதிவேற்றம் பிழை: $e'),
+              content: Text('படப் பதிவேற்றம் பிழை / Upload error: $e'),
               backgroundColor: const Color(0xFFC81E1E),
             ),
           );
@@ -516,7 +505,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     label: Text(
                       _isUploadingToR2
                           ? 'பதிவேற்றப்படுகிறது...'
-                          : 'புகைப்படம் பதிவேற்றவும் (Upload to R2)',
+                          : 'புகைப்படம் மாற்றவும் / Upload Photo',
                       style: const TextStyle(
                           fontSize: 12, fontWeight: FontWeight.bold),
                     ),

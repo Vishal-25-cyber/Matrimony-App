@@ -1132,11 +1132,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
                 const SizedBox(height: 10),
 
-                // Cloudflare R2 Certificate Link
+                // Horoscope Certificate PDF Link
                 _buildFormField(
-                  label: "Cloudflare R2 ஜாதக சான்றிதழ் PDF இணைப்பு",
+                  label: "ஜாதக சான்றிதழ் PDF இணைப்பு / Certificate Link",
                   controller: _r2UrlCtrl,
-                  hint: "https://pub-r2.pandarathar-matrimony.com/certificates/PM-xxxx.pdf",
+                  hint: "https://.../certificates/PM-xxxx.pdf",
                   prefixIcon: Icons.cloud_done_rounded,
                 ),
               ],
@@ -1702,7 +1702,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     if (p.r2CertificateUrl != null) ...[
                       const SizedBox(width: 8),
                       const Text(
-                        "R2: ✓",
+                        "PDF: ✓",
                         style: TextStyle(fontSize: 9.5, color: Color(0xFF2B6CB0), fontWeight: FontWeight.bold),
                       ),
                     ],

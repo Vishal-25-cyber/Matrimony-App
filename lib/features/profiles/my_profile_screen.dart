@@ -69,7 +69,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                 ),
                 const SizedBox(width: 10),
-                Expanded(child: Text('${result.fileName} Cloudflare R2-ல் பதிவேற்றப்படுகிறது...')),
+                Expanded(child: Text('${result.fileName} பதிவேற்றப்படுகிறது... / Uploading...')),
               ],
             ),
             backgroundColor: const Color(0xFF7A132B),
@@ -111,7 +111,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                 children: [
                   Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
                   SizedBox(width: 10),
-                  Expanded(child: Text('சுயவிவரப் படம் Cloudflare R2-ல் வெற்றிகரமாக சேமிக்கப்பட்டது! ✓')),
+                  Expanded(child: Text('சுயவிவரப் படம் வெற்றிகரமாக சேமிக்கப்பட்டது! ✓')),
                 ],
               ),
               backgroundColor: Color(0xFF1B6B38),
@@ -125,7 +125,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('R2 பதிவேற்றம் பிழை: $e'),
+              content: Text('படப் பதிவேற்றம் பிழை / Upload error: $e'),
               backgroundColor: const Color(0xFFC81E1E),
             ),
           );
