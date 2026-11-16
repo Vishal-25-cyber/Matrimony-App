@@ -5,66 +5,87 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Privacy Policy - Pandarathar Matrimony</title>
   <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #2C1E20; max-width: 800px; margin: 0 auto; padding: 24px; background-color: #FFFBF6; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #2C1E20; max-width: 840px; margin: 0 auto; padding: 24px; background-color: #FFFBF6; }
     header { border-bottom: 2px solid #7A132B; padding-bottom: 16px; margin-bottom: 24px; }
-    h1 { color: #7A132B; margin: 0 0 8px 0; }
-    h2 { color: #580B23; margin-top: 24px; border-left: 4px solid #7A132B; padding-left: 10px; }
+    h1 { color: #7A132B; margin: 0 0 8px 0; font-size: 26px; }
+    h2 { color: #580B23; margin-top: 24px; border-left: 4px solid #7A132B; padding-left: 10px; font-size: 18px; }
     .badge { display: inline-block; background: #7A132B; color: white; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: bold; }
     .card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #EADBCE; margin-bottom: 16px; }
+    ul { padding-left: 20px; }
+    li { margin-bottom: 8px; }
+    .placeholder-note { background: #FFF3E0; border-left: 4px solid #FF9800; padding: 8px 12px; border-radius: 4px; font-size: 12.5px; margin: 8px 0; color: #E65100; }
     footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #EADBCE; font-size: 13px; color: #7A686B; text-align: center; }
   </style>
 </head>
 <body>
   <header>
     <span class="badge">Official Policy</span>
-    <h1>Pandarathar Matrimony</h1>
-    <p><strong>பண்டாரத்தார் மேட்ரிமோனி — Privacy Policy</strong><br>Effective Date: November 2026</p>
+    <h1>Pandarathar Matrimony (பண்டாரத்தார் மேட்ரிமோனி)</h1>
+    <p><strong>Privacy Policy & Data Protection Statement</strong><br>Last Updated: November 2026</p>
   </header>
 
   <div class="card">
     <h2>1. Introduction</h2>
-    <p>Pandarathar Matrimony ("we", "our", or "the App") is committed to protecting the privacy of its members. This Privacy Policy outlines what personal data we collect, why we collect it, how it is stored, and your rights regarding your data.</p>
+    <p>Pandarathar Matrimony ("we", "us", or "our") operates the Pandarathar Matrimony mobile application for Android. We respect your privacy and are committed to safeguarding personal information collected from registered members seeking matrimonial alliances within the community.</p>
   </div>
 
   <div class="card">
-    <h2>2. Information We Collect</h2>
+    <h2>2. Categories of Information Collected</h2>
     <ul>
-      <li><strong>Profile & Personal Identity:</strong> Full Name, gender, date of birth, age, caste, sub-caste, education, occupation, and residential location.</li>
-      <li><strong>Contact Information:</strong> 10-digit mobile phone number and optional email address used for secure account verification and profile communication.</li>
-      <li><strong>Horoscope & Astrological Data:</strong> Rasi (Moon sign), Nakshatra (Star), Gothram, Chevvai Dosham, Rahu-Ketu Dosham, and planetary placement charts used exclusively for 10 Porutham matrimonial compatibility scoring.</li>
-      <li><strong>Profile Photographs:</strong> User-submitted photos for candidate identification, uploaded securely to encrypted Cloudflare R2 object storage.</li>
-      <li><strong>Payment Reference Details:</strong> Payer name, payment amount (₹25), and 12-digit UPI Transaction Reference (UTR) for contact unlock requests. <em>We do not store bank passwords, credit/debit card numbers, or CVVs.</em></li>
+      <li><strong>Account & Authentication:</strong> Name, 10-digit mobile number, optional email address, and authentication credentials.</li>
+      <li><strong>Candidate Profile Details:</strong> Gender (Bride / Groom), date of birth, age, marital status, caste, sub-caste, education, occupation, and residential address/district.</li>
+      <li><strong>Horoscope & Astrological Data:</strong> Rasi (Moon sign), Nakshatra (Star), Gothram, Chevvai Dosham, Rahu-Ketu Dosham, and planetary astrological placements used exclusively for calculating the traditional 10 Poruthams (திருமணப் பொருத்தங்கள்).</li>
+      <li><strong>Photographs:</strong> User-submitted candidate portrait photographs, uploaded to secure Cloudflare R2 object storage.</li>
+      <li><strong>Payment Reference Information:</strong> For ₹25 contact unlock requests, we record payer name, payment amount, and 12-digit UPI Transaction Reference (UTR) for manual or automated verification. <em>We do not collect or store bank account numbers, debit/credit card details, or banking passwords.</em></li>
+      <li><strong>In-App Notifications & Shortlists:</strong> Liked profiles, favorites/shortlists, and unlock notifications generated during app interaction.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>3. How We Use and Protect Your Data</h2>
+    <h2>3. Cloud Infrastructure & Third-Party Service Providers</h2>
     <ul>
-      <li><strong>Private by Default:</strong> Candidate phone numbers are never displayed publicly. Contact details are only unlocked after an intentional ₹25 verification fee payment.</li>
-      <li><strong>Encryption in Transit & at Rest:</strong> All client-to-server traffic is strictly transmitted over TLS/HTTPS. Database records are encrypted at rest with AES-256 within MongoDB Atlas.</li>
-      <li><strong>No Third-Party Ad Tracking:</strong> We do not sell, rent, or share personal data with external advertising networks.</li>
+      <li><strong>MongoDB Atlas:</strong> Account and matrimonial profile data are stored in a managed cloud database with TLS 1.3 encryption in transit and AES-256 encryption at rest.</li>
+      <li><strong>Cloudflare R2:</strong> User photos and documents are stored on Cloudflare's S3-compatible, geo-redundant storage using encrypted SSL channels.</li>
+      <li><strong>No External Ad Brokers:</strong> We do not integrate third-party ad networks (e.g. AdMob) and never sell user data to data brokers.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>4. Account and Data Deletion</h2>
-    <p>Users have the right to request full and permanent deletion of their account and all associated data at any time:</p>
+    <h2>4. Privacy and Access Controls</h2>
     <ul>
-      <li><strong>In-App:</strong> Navigate to <strong>Settings (அமைப்புகள்) ➔ Delete Account (கணக்கு நீக்கம்)</strong>. Upon confirmation, your profile, horoscope data, photos, and saved favorites will be permanently purged from the database.</li>
-      <li><strong>Online Request:</strong> You can also submit an external deletion request using our <a href="delete-account.html">Account Deletion Request Page</a>.</li>
+      <li><strong>Private Contact Information:</strong> Candidate telephone numbers are never published openly. They remain protected until an interested candidate completes the ₹25 contact unlock request.</li>
+      <li><strong>Verification:</strong> Payment records (UTR numbers) are verified before contacts are permanently accessible to the requesting user.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>5. Contact & Support</h2>
-    <p>If you have any questions or data concerns, contact our service center:</p>
-    <p><strong>Pandarathar Matrimony Service Center</strong><br>
-    Phone: +91 94884 46677 / +91 84383 82277<br>
-    Address: Opp. Kamatchi Lodge, Near Bus Stand, Chennimalai - 638 051, Erode District, Tamil Nadu, India.</p>
+    <h2>5. Data Retention & Permanent Account Deletion</h2>
+    <p>We retain personal information only for as long as your profile remains active on the platform. Users have the right to delete their data at any time:</p>
+    <ul>
+      <li><strong>In-App Deletion:</strong> Go to <strong>Settings (அமைப்புகள்) ➔ Delete Account (கணக்கு நிரந்தர நீக்கம்)</strong>. Deletion permanently erases your profile, horoscope data, photos, and saved shortlists from MongoDB Atlas.</li>
+      <li><strong>Web Deletion:</strong> You can submit a deletion request via our public <a href="delete-account.html">Account Deletion Web Page</a>.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>6. User Rights</h2>
+    <p>You have the right to inspect, correct, update, or permanently remove your profile data at any time directly through the app interface or by contacting support.</p>
+  </div>
+
+  <div class="card">
+    <h2>7. Contact Information</h2>
+    <p>For privacy queries, data requests, or support:</p>
+    <p>
+      <strong>Pandarathar Matrimony Service Center</strong><br>
+      Founder: Sennimalai Arumugam (சென்னிமலை ஆறுமுகம்)<br>
+      Address: Opp. Kamatchi Lodge, Near Bus Stand, Chennimalai - 638 051, Erode Dt., Tamil Nadu, India.<br>
+      Helpline: +91 94884 46677 / +91 84383 82277<br>
+      Email: <span class="placeholder-note">[REPLACE WITH YOUR OFFICIAL DOMAIN EMAIL, e.g. support@pandarathar-matrimony.com]</span>
+    </p>
   </div>
 
   <footer>
-    <p>&copy; 2026 Pandarathar Matrimony. All rights reserved.</p>
+    <p>&copy; 2026 Pandarathar Matrimony. All rights reserved. &bull; <a href="delete-account.html">Delete Account</a></p>
   </footer>
 </body>
 </html>

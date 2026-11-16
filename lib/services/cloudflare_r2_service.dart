@@ -121,6 +121,15 @@ class CloudflareR2Service {
 
     try {
       final activeHost = await getResolvedBackendUrl();
+      if (activeHost.isEmpty) {
+        if (kReleaseMode) {
+          throw StateError(
+            "Production backend URL is required. Build the application with: "
+            "--dart-define=BACKEND_URL=https://YOUR_PRODUCTION_DOMAIN",
+          );
+        }
+        throw StateError("No active backend service detected.");
+      }
       final uri = Uri.parse("$activeHost/api/profile/upload-image");
       final request = http.MultipartRequest('POST', uri);
 
@@ -183,6 +192,7 @@ class CloudflareR2Service {
     if (userId.trim().isEmpty) return null;
     try {
       final activeHost = await getResolvedBackendUrl();
+      if (activeHost.isEmpty) return null;
       final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
       final uri = Uri.parse("$activeHost/api/profile/image/$cleanId?json=true");
       final res = await http.get(uri, headers: {'Accept': 'application/json'}).timeout(const Duration(seconds: 5));
@@ -199,6 +209,7 @@ class CloudflareR2Service {
     if (userId.trim().isEmpty) return false;
     try {
       final activeHost = await getResolvedBackendUrl();
+      if (activeHost.isEmpty) return false;
       final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
       final uri = Uri.parse("$activeHost/api/profile/image?userId=${Uri.encodeQueryComponent(cleanId)}");
       final res = await http.delete(uri).timeout(const Duration(seconds: 8));

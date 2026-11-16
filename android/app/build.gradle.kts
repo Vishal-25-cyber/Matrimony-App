@@ -35,7 +35,9 @@ android {
                 keyPassword = keystoreProperties.getProperty("keyPassword")
                 val storeFilePath = keystoreProperties.getProperty("storeFile")
                 if (storeFilePath != null) {
-                    storeFile = file(storeFilePath)
+                    val appFile = file(storeFilePath)
+                    val rootFile = rootProject.file(storeFilePath)
+                    storeFile = if (appFile.exists()) appFile else rootFile
                 }
                 storePassword = keystoreProperties.getProperty("storePassword")
             }
@@ -45,7 +47,12 @@ android {
     buildTypes {
         release {
             val releaseSigning = signingConfigs.getByName("release")
-            signingConfig = if (releaseSigning.storeFile?.exists() == true) {
+            val isReleaseKeystoreConfigured = releaseSigning.storeFile?.exists() == true &&
+                    !releaseSigning.storePassword.isNullOrBlank() &&
+                    releaseSigning.storePassword != "YOUR_ACTUAL_STORE_PASSWORD" &&
+                    releaseSigning.storePassword != "YOUR_STORE_PASSWORD"
+
+            signingConfig = if (isReleaseKeystoreConfigured) {
                 releaseSigning
             } else {
                 signingConfigs.getByName("debug")

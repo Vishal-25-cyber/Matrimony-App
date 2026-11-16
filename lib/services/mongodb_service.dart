@@ -10,9 +10,10 @@ import '../core/utils/local_auth_storage.dart';
 class MongoDBService {
   static final MongoDBService _instance = MongoDBService._internal();
   factory MongoDBService() => _instance;
-  // MongoDB Atlas Cloud Connection (Active Cluster)
-  static const String defaultAtlasUri =
-      "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true";
+  // MongoDB Atlas Cloud Connection (Debug/Test only; In release mode, all operations route through secure HTTPS backend)
+  static const String defaultAtlasUri = kReleaseMode
+      ? ""
+      : "mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true";
   static String atlasUri = defaultAtlasUri;
 
   // Local MongoDB connection fallback
@@ -37,6 +38,10 @@ class MongoDBService {
   Future<bool> _checkWebBridge() async {
     try {
       final activeUrl = await CloudflareR2Service.getResolvedBackendUrl();
+      if (activeUrl.isEmpty) {
+        _isConnected = false;
+        return false;
+      }
       final res = await http.get(Uri.parse('$activeUrl/api/health')).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         _isConnected = true;
