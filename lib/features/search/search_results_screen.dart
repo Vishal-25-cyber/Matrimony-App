@@ -318,7 +318,6 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                             MaterialPageRoute(
                               builder: (_) => ContactCartScreen(
                                 mockData: widget.mockData,
-                                initialTabIndex: 2,
                               ),
                             ),
                           );

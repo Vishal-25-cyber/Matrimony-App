@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:mongo_dart/mongo_dart.dart';
+import 'cloudflare_r2_service.dart';
+import '../core/utils/local_auth_storage.dart';
 
 /// MongoDB Database Service
 /// Supports Local MongoDB, MongoDB Atlas direct TCP, and Web Bridge on Chrome
@@ -16,8 +18,8 @@ class MongoDBService {
   // Local MongoDB connection fallback
   static const String localUri = "mongodb://127.0.0.1:27017/pandarathar_matrimony";
 
-  // HTTP Web Bridge URL (for Chrome / Flutter Web)
-  static const String webBridgeUrl = "http://127.0.0.1:8765";
+  // HTTP Web Bridge URL (for Chrome / Flutter Web & Mobile LAN)
+  static String get webBridgeUrl => CloudflareR2Service.backendBaseUrl;
 
   Db? _db;
   bool _isConnected = false;
@@ -26,20 +28,20 @@ class MongoDBService {
   String get activeDatabaseName => _db?.databaseName ?? 'pandarathar_matrimony';
 
   MongoDBService._internal() {
-    if (kIsWeb) {
-      _checkWebBridge();
-    } else if (!const bool.fromEnvironment('FLUTTER_TEST')) {
+    _checkWebBridge();
+    if (!kIsWeb && !const bool.fromEnvironment('FLUTTER_TEST')) {
       connect();
     }
   }
 
   Future<bool> _checkWebBridge() async {
     try {
-      final res = await http.get(Uri.parse('$webBridgeUrl/api/health')).timeout(const Duration(seconds: 2));
+      final activeUrl = await CloudflareR2Service.getResolvedBackendUrl();
+      final res = await http.get(Uri.parse('$activeUrl/api/health')).timeout(const Duration(seconds: 3));
       if (res.statusCode == 200) {
         _isConnected = true;
         if (kDebugMode) {
-          print("✓ Connected to MongoDB Atlas via Web Bridge: $webBridgeUrl");
+          print("✓ Connected to MongoDB Atlas via Web Bridge: $activeUrl");
         }
         return true;
       }
@@ -59,14 +61,37 @@ class MongoDBService {
   /// Clear database cache for test resets
   void clearDatabaseCache() {
     _databaseCache.clear();
+    _cachedPayments.clear();
   }
+
+  Future<bool>? _connectingFuture;
 
   /// Connect to MongoDB Atlas (or local MongoDB/cache fallback)
   Future<bool> connect({String? customUri}) async {
+    if (_connectingFuture != null) {
+      return await _connectingFuture!;
+    }
+    _connectingFuture = _connectInternal(customUri: customUri);
+    try {
+      return await _connectingFuture!;
+    } finally {
+      _connectingFuture = null;
+    }
+  }
+
+  Future<bool> _connectInternal({String? customUri}) async {
     final connectionString = customUri ?? (atlasUri.isNotEmpty ? atlasUri : null) ?? localUri;
     try {
+      if (_db != null && _isConnected && _db?.isConnected == true) {
+        return true;
+      }
+      if (_db != null) {
+        try {
+          await _db!.close();
+        } catch (_) {}
+      }
       _db = await Db.create(connectionString);
-      await _db!.open().timeout(const Duration(seconds: 5));
+      await _db!.open().timeout(const Duration(seconds: 15));
       _isConnected = true;
       if (kDebugMode) {
         print("✓ Connected to MongoDB Atlas: $connectionString");
@@ -75,10 +100,21 @@ class MongoDBService {
     } catch (e) {
       _isConnected = false;
       if (kDebugMode) {
-        print("ℹ MongoDB Atlas offline or unreachable ($e). Using local cache mode.");
+        print("ℹ MongoDB Atlas connection failed ($e).");
       }
       return false;
     }
+  }
+
+  /// Ensure MongoDB connection is active before read/write operations
+  Future<bool> ensureConnected() async {
+    if (kIsWeb) {
+      return await _checkWebBridge();
+    }
+    if (_isConnected && _db != null && _db?.isConnected == true) {
+      return true;
+    }
+    return await connect();
   }
 
   /// Check Connection Health and return diagnostics
@@ -195,7 +231,7 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/profile'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(updatedDoc),
-        ).timeout(const Duration(seconds: 6));
+        ).timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           _isConnected = true;
           return true;
@@ -206,6 +242,7 @@ class MongoDBService {
       return true;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) {
       return true;
     }
@@ -249,7 +286,7 @@ class MongoDBService {
     }
   }
 
-  /// Update User Account in MongoDB (users collection)
+  /// Update User Account in MongoDB (users collection) and Local Persistent Storage
   Future<bool> updateUserAccount(Map<String, dynamic> userData) async {
     final phone = userData['phone']?.toString() ?? '';
     final username = userData['username']?.toString() ?? '';
@@ -259,6 +296,11 @@ class MongoDBService {
       ...userData,
       'updatedAt': DateTime.now().toIso8601String(),
     };
+
+    // 1. Immediately save to permanent local storage (file on desktop/mobile, localStorage on web)
+    try {
+      await LocalAuthStorage.saveUser(updatedDoc);
+    } catch (_) {}
 
     if (phone.isNotEmpty) {
       final cleanPhone = phone.replaceAll(RegExp(r'\D'), '');
@@ -281,7 +323,7 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/user'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(updatedDoc),
-        ).timeout(const Duration(seconds: 6));
+        ).timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           _isConnected = true;
           return true;
@@ -292,6 +334,7 @@ class MongoDBService {
       return true;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) {
       return true;
     }
@@ -308,6 +351,9 @@ class MongoDBService {
         },
         upsert: true,
       );
+      if (kDebugMode) {
+        print("✓ [MongoDB Atlas] User account persisted permanently: ${userData['name']} ($phone / $username)");
+      }
       return true;
     } catch (e) {
       if (kDebugMode) print("MongoDB Error updating user account: $e");
@@ -346,7 +392,7 @@ class MongoDBService {
       try {
         final res = await http.get(
           Uri.parse('$webBridgeUrl/api/profile?query=$identifier'),
-        ).timeout(const Duration(seconds: 6));
+        ).timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['profile'] != null) {
@@ -360,6 +406,7 @@ class MongoDBService {
       return null;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) return null;
     try {
       final collection = _db!.collection('profiles');
@@ -407,11 +454,23 @@ class MongoDBService {
       }
     }
 
+    // Check permanent local storage (file on desktop/mobile, localStorage on web)
+    try {
+      final localUser = await LocalAuthStorage.findUser(phoneOrUsernameOrEmail);
+      if (localUser != null) {
+        if (clean.isNotEmpty) _databaseCache['user_phone_$clean'] = localUser;
+        if (localUser['username'] != null) {
+          _databaseCache['user_username_${localUser['username'].toString().toLowerCase()}'] = localUser;
+        }
+        return localUser;
+      }
+    } catch (_) {}
+
     if (kIsWeb) {
       try {
         final res = await http.get(
           Uri.parse('$webBridgeUrl/api/user?query=$phoneOrUsernameOrEmail'),
-        ).timeout(const Duration(seconds: 6));
+        ).timeout(const Duration(seconds: 8));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
           if (data['user'] != null) {
@@ -420,6 +479,9 @@ class MongoDBService {
             if (doc['username'] != null) {
               _databaseCache['user_username_${doc['username'].toString().toLowerCase()}'] = doc;
             }
+            try {
+              await LocalAuthStorage.saveUser(doc);
+            } catch (_) {}
             return doc;
           }
         }
@@ -427,6 +489,7 @@ class MongoDBService {
       return null;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) return null;
     try {
       final collection = _db!.collection('users');
@@ -437,10 +500,84 @@ class MongoDBService {
       }
       doc ??= await collection.findOne(where.eq('username', queryLower));
       doc ??= await collection.findOne(where.eq('email', queryLower));
+      if (doc != null) {
+        if (clean.isNotEmpty) _databaseCache['user_phone_$clean'] = doc;
+        if (doc['username'] != null) {
+          _databaseCache['user_username_${doc['username'].toString().toLowerCase()}'] = doc;
+        }
+        try {
+          await LocalAuthStorage.saveUser(doc);
+        } catch (_) {}
+      }
       return doc;
     } catch (_) {
       return null;
     }
+  }
+
+  /// Fetch all user accounts from local storage, web bridge, or direct MongoDB Atlas
+  Future<List<Map<String, dynamic>>> getAllUserAccounts() async {
+    final results = <Map<String, dynamic>>[];
+    final seenPhones = <String>{};
+
+    // 1. Load from persistent local storage
+    try {
+      final local = await LocalAuthStorage.loadAllUsers();
+      for (final u in local) {
+        final p = u['phone']?.toString().replaceAll(RegExp(r'\D'), '') ?? '';
+        if (p.isNotEmpty && seenPhones.add(p)) {
+          results.add(u);
+        }
+      }
+    } catch (_) {}
+
+    // 2. Load from Web Bridge or MongoDB Atlas
+    if (kIsWeb) {
+      try {
+        final res = await http.get(
+          Uri.parse('$webBridgeUrl/api/users'),
+        ).timeout(const Duration(seconds: 8));
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          if (data['users'] is List) {
+            for (final u in data['users']) {
+              final m = Map<String, dynamic>.from(u as Map);
+              final p = m['phone']?.toString().replaceAll(RegExp(r'\D'), '') ?? '';
+              if (p.isNotEmpty) {
+                if (seenPhones.add(p)) {
+                  results.add(m);
+                }
+                await LocalAuthStorage.saveUser(m);
+              }
+            }
+          }
+        }
+      } catch (_) {}
+      return results;
+    }
+
+    await ensureConnected();
+    if (_isConnected && _db != null) {
+      try {
+        final collection = _db!.collection('users');
+        final allDocs = await collection.find().toList();
+        for (final doc in allDocs) {
+          final m = Map<String, dynamic>.from(doc);
+          m.remove('_id');
+          final p = m['phone']?.toString().replaceAll(RegExp(r'\D'), '') ?? '';
+          if (p.isNotEmpty) {
+            if (seenPhones.add(p)) {
+              results.add(m);
+            }
+            await LocalAuthStorage.saveUser(m);
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) print("Error fetching all users from MongoDB: $e");
+      }
+    }
+
+    return results;
   }
 
   /// Delete Profile from MongoDB Atlas
@@ -566,11 +703,12 @@ class MongoDBService {
           Uri.parse('$webBridgeUrl/api/payment'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode(paymentDoc),
-        ).timeout(const Duration(seconds: 3));
+        ).timeout(const Duration(seconds: 5));
       } catch (_) {}
       return true;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) {
       return true;
     }
@@ -597,7 +735,11 @@ class MongoDBService {
 
     if (kIsWeb) {
       try {
-        final uri = Uri.parse('$webBridgeUrl/api/payments?userId=${userId ?? ''}&userPhone=$cleanPhone');
+        final queryParts = <String>[];
+        if (userId != null && userId.isNotEmpty) queryParts.add('userId=$userId');
+        if (cleanPhone.isNotEmpty) queryParts.add('userPhone=$cleanPhone');
+        final qs = queryParts.isNotEmpty ? '?${queryParts.join('&')}' : '';
+        final uri = Uri.parse('$webBridgeUrl/api/payments$qs');
         final res = await http.get(uri).timeout(const Duration(seconds: 6));
         if (res.statusCode == 200) {
           final data = jsonDecode(res.body);
@@ -623,6 +765,7 @@ class MongoDBService {
       } catch (_) {}
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) {
       return _cachedPayments.where((p) {
         if (userId != null && userId.isNotEmpty && p['userId'] != userId) return false;
@@ -635,12 +778,35 @@ class MongoDBService {
     }
     try {
       final collection = _db!.collection('payments');
-      final query = userId != null ? where.eq('userId', userId) : where;
+      final query = userId != null && userId.isNotEmpty ? where.eq('userId', userId) : where;
       final docs = await collection.find(query).toList();
       return docs;
     } catch (_) {
       return _cachedPayments;
     }
+  }
+
+  /// Delete a payment request by ID from MongoDB Atlas
+  Future<bool> deletePaymentRequest(String id) async {
+    _cachedPayments.removeWhere((p) => p['id'] == id);
+    _databaseCache.remove('payment_$id');
+    if (kIsWeb) {
+      try {
+        final uri = Uri.parse('$webBridgeUrl/api/payment?id=$id');
+        final res = await http.delete(uri).timeout(const Duration(seconds: 5));
+        return res.statusCode == 200;
+      } catch (_) {
+        return false;
+      }
+    }
+    if (_isConnected && _db != null) {
+      try {
+        final col = _db!.collection('payments');
+        await col.remove(where.eq('id', id));
+        return true;
+      } catch (_) {}
+    }
+    return false;
   }
 
   /// Fetch shortlist for a user from local cache or MongoDB Atlas
@@ -672,6 +838,7 @@ class MongoDBService {
       return null;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) return null;
     try {
       final collection = _db!.collection('shortlists');
@@ -722,6 +889,7 @@ class MongoDBService {
       return true;
     }
 
+    await ensureConnected();
     if (!_isConnected || _db == null) return true;
     try {
       final collection = _db!.collection('shortlists');

@@ -43,6 +43,10 @@ class HoroscopeChartModel {
     "கேது",
   ];
 
+  static Map<String, String> getEmptyChart() {
+    return {for (final h in houses) h.key: '-'};
+  }
+
   static Map<String, String> getShudhaRasiTemplate() {
     return {
       'meenam': 'புதன்',

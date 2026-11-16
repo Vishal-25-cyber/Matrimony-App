@@ -14,8 +14,53 @@ class CloudflareR2Service {
   factory CloudflareR2Service() => _instance;
   CloudflareR2Service._internal();
 
+  /// Candidate backend URLs for auto-discovery across Web, physical mobile (LAN), and emulator
+  static const List<String> candidateHosts = [
+    String.fromEnvironment('BACKEND_URL', defaultValue: ''),
+    'http://10.1.32.156:8765', // Host machine Wi-Fi LAN for physical mobile phones
+    'http://10.0.2.2:8765',    // Android Emulator host loopback
+    'http://127.0.0.1:8765',   // Web & adb reverse
+    'http://localhost:8765',
+  ];
+
+  static String _activeBaseUrl = '';
+
   /// Backend API base URL
-  static const String backendBaseUrl = "http://127.0.0.1:8765";
+  static String get backendBaseUrl {
+    if (_activeBaseUrl.isNotEmpty) return _activeBaseUrl;
+    const envUrl = String.fromEnvironment('BACKEND_URL', defaultValue: '');
+    if (envUrl.isNotEmpty) {
+      _activeBaseUrl = envUrl;
+      return _activeBaseUrl;
+    }
+    if (kIsWeb) {
+      _activeBaseUrl = 'http://127.0.0.1:8765';
+      return _activeBaseUrl;
+    }
+    // On physical mobile devices (Android), connect via Wi-Fi LAN
+    _activeBaseUrl = 'http://10.1.32.156:8765';
+    return _activeBaseUrl;
+  }
+
+  /// Discovers the active reachable backend host in real-time
+  static Future<String> getResolvedBackendUrl() async {
+    if (kIsWeb) return 'http://127.0.0.1:8765';
+    if (_activeBaseUrl.isNotEmpty && _activeBaseUrl != 'http://127.0.0.1:8765') {
+      return _activeBaseUrl;
+    }
+    for (final host in candidateHosts) {
+      if (host.trim().isEmpty) continue;
+      try {
+        final res = await http.get(Uri.parse('$host/api/health')).timeout(const Duration(milliseconds: 1200));
+        if (res.statusCode == 200) {
+          _activeBaseUrl = host;
+          if (kDebugMode) print("✓ [Cloudflare R2] Connected to backend at: $host");
+          return host;
+        }
+      } catch (_) {}
+    }
+    return backendBaseUrl;
+  }
 
   /// Bucket metadata configuration
   static const String bucketName = "matrimony-profile-images";
@@ -53,7 +98,8 @@ class CloudflareR2Service {
     }
 
     try {
-      final uri = Uri.parse("$backendBaseUrl/api/profile/upload-image");
+      final activeHost = await getResolvedBackendUrl();
+      final uri = Uri.parse("$activeHost/api/profile/upload-image");
       final request = http.MultipartRequest('POST', uri);
 
       // Authentication headers and user identity
@@ -114,8 +160,9 @@ class CloudflareR2Service {
   Future<String?> getProfileImageUrl(String userId) async {
     if (userId.trim().isEmpty) return null;
     try {
+      final activeHost = await getResolvedBackendUrl();
       final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-      final uri = Uri.parse("$backendBaseUrl/api/profile/image/$cleanId?json=true");
+      final uri = Uri.parse("$activeHost/api/profile/image/$cleanId?json=true");
       final res = await http.get(uri, headers: {'Accept': 'application/json'}).timeout(const Duration(seconds: 5));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -129,8 +176,9 @@ class CloudflareR2Service {
   Future<bool> deleteProfileImage(String userId) async {
     if (userId.trim().isEmpty) return false;
     try {
+      final activeHost = await getResolvedBackendUrl();
       final cleanId = userId.trim().toLowerCase().replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-      final uri = Uri.parse("$backendBaseUrl/api/profile/image?userId=${Uri.encodeQueryComponent(cleanId)}");
+      final uri = Uri.parse("$activeHost/api/profile/image?userId=${Uri.encodeQueryComponent(cleanId)}");
       final res = await http.delete(uri).timeout(const Duration(seconds: 8));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);

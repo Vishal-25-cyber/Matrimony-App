@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-
+import '../../core/utils/profile_image_picker.dart';
 import '../../models/profile_model.dart';
 import '../../models/payment_request_model.dart';
 import '../../models/horoscope_chart_model.dart';
 import '../../services/mock_data_service.dart';
+import '../../services/cloudflare_r2_service.dart';
 import '../profiles/profile_details_screen.dart';
 import '../main_navigation_screen.dart';
 import 'widgets/admin_horoscope_table_editor.dart';
@@ -51,8 +52,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
   final _phoneCtrl = TextEditingController(text: "+91 94884 77112");
   final _whatsappCtrl = TextEditingController(text: "+91 94884 77112");
   final _r2UrlCtrl = TextEditingController();
-  Map<String, String> _adminRasiChart = HoroscopeChartModel.getShudhaRasiTemplate();
-  Map<String, String> _adminNavamsamChart = HoroscopeChartModel.getStandardNavamsamTemplate();
+  Map<String, String> _adminRasiChart = HoroscopeChartModel.getEmptyChart();
+  Map<String, String> _adminNavamsamChart = HoroscopeChartModel.getEmptyChart();
+
+  // Profile Image Upload State
+  Uint8List? _uploadedImageBytes;
+  String? _uploadedImageName;
+  String? _uploadedR2ImageUrl;
+  bool _isUploadingToR2 = false;
 
   // Search in Manage Tab
   final _searchCtrl = TextEditingController();
@@ -108,6 +115,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
     _generateDefaultR2Url();
+    widget.mockData.loadAllPaymentRequestsFromAtlas();
   }
 
   void _generateDefaultR2Url() {
@@ -154,12 +162,102 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     }
   }
 
+  Future<void> _pickProfilePhoto() async {
+    try {
+      final result = await pickProfileImage(context: context);
+      if (result != null) {
+        setState(() {
+          _uploadedImageBytes = result.bytes;
+          _uploadedImageName = result.fileName;
+          _isUploadingToR2 = true;
+        });
+
+        // Determine target unique Profile ID
+        final nextId = widget.mockData.generateNextProfileId();
+
+        try {
+          final r2Url = await CloudflareR2Service().uploadProfileImage(
+            imageBytes: result.bytes,
+            fileName: result.fileName,
+            userId: nextId,
+            oldImageUrl: _uploadedR2ImageUrl,
+          );
+
+          if (mounted) {
+            setState(() {
+              _uploadedR2ImageUrl = r2Url;
+              _isUploadingToR2 = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Row(
+                  children: [
+                    Icon(Icons.cloud_done_rounded, color: Colors.white, size: 20),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text("புகைப்படம் Cloudflare R2-ல் வெற்றிகரமாக பதிவேற்றப்பட்டது!"),
+                    ),
+                  ],
+                ),
+                backgroundColor: Color(0xFF1B6B38),
+                duration: Duration(seconds: 3),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        } catch (uploadErr) {
+          if (mounted) {
+            setState(() => _isUploadingToR2 = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text("Cloudflare R2 பதிவேற்றத்தில் பிழை: $uploadErr"),
+                backgroundColor: Colors.orange.shade800,
+                duration: const Duration(seconds: 4),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isUploadingToR2 = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("படம் தேர்ந்தெடுப்பதில் பிழை: $e"),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+    }
+  }
+
   void _handleAddProfile() {
+    if (_uploadedImageBytes == null && (_uploadedR2ImageUrl == null || _uploadedR2ImageUrl!.isEmpty)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              Icon(Icons.add_a_photo_rounded, color: Colors.white, size: 20),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text("வரனின் புகைப்படத்தை பதிவேற்றுவது கட்டாயமாகும் (Photo is compulsory)"),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text("தயவுசெய்து அனைத்து கட்டாய விவரங்களையும் நிரப்பவும்."),
           backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
         ),
       );
       return;
@@ -217,7 +315,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   : _doshamType == 'kalathra'
                       ? "களத்திர தோஷம்"
                       : "புதிய வரன்",
-      imageAsset: isBride ? "assets/images/bride_sneha.jpg" : "assets/images/user_karthik.jpg",
+      imageAsset: _uploadedImageBytes != null
+          ? null
+          : (isBride ? "assets/images/bride_sneha.jpg" : "assets/images/user_karthik.jpg"),
+      imageBytes: _uploadedImageBytes,
+      profileImageUrl: _uploadedR2ImageUrl,
       hobbies: ["Music", "Reading", "Temple Visits"],
       isOnline: true,
       isVerified: true,
@@ -238,8 +340,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     // Reset inputs
     _nameCtrl.clear();
     _nameTamilCtrl.clear();
-    _adminRasiChart = HoroscopeChartModel.getShudhaRasiTemplate();
-    _adminNavamsamChart = HoroscopeChartModel.getStandardNavamsamTemplate();
+    setState(() {
+      _uploadedImageBytes = null;
+      _uploadedImageName = null;
+      _uploadedR2ImageUrl = null;
+      _isUploadingToR2 = false;
+    });
+    _adminRasiChart = HoroscopeChartModel.getEmptyChart();
+    _adminNavamsamChart = HoroscopeChartModel.getEmptyChart();
     _generateDefaultR2Url();
 
     ScaffoldMessenger.of(context).showSnackBar(
@@ -453,56 +561,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Banner Info
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFEADBCE)),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.03),
-                  blurRadius: 6,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF7A132B).withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.qr_code_scanner_rounded, color: Color(0xFF7A132B), size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "UPI QR கட்டண சரிபார்ப்பு • ₹25 வீதம்",
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        "பயனரின் 12-இலக்க UTR-ஐ சரிபார்த்து 'அனுமதி' அழுத்தவும். தொடர்பு விவரங்கள் உடனே திறக்கப்படும்.",
-                        style: TextStyle(fontSize: 11.5, color: Colors.brown[700], height: 1.3),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Header with count
+          // Header with count and refresh
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -510,18 +569,31 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 "நிலுவையில் உள்ள கோரிக்கைகள் (${pendingList.length})",
                 style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
               ),
-              if (pendingList.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE5A93C).withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.refresh_rounded, size: 20, color: Color(0xFF580B23)),
+                    tooltip: "புதுப்பி / Refresh from Database",
+                    onPressed: () async {
+                      await widget.mockData.loadAllPaymentRequestsFromAtlas();
+                      setState(() {});
+                    },
                   ),
-                  child: Text(
-                    "${pendingList.length} Pending",
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF7A4B00)),
-                  ),
-                ),
+                  if (pendingList.isNotEmpty)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE5A93C).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        "${pendingList.length} Pending",
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF7A4B00)),
+                      ),
+                    ),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -556,14 +628,40 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
           const SizedBox(height: 22),
 
-          // Request History Section
-          if (allRequests.where((r) => r.status != 'pending').isNotEmpty) ...[
-            const Text(
-              "சமீபத்திய முடிவுகள் / Approved & History",
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-            ),
-            const SizedBox(height: 10),
-            ...allRequests.where((r) => r.status != 'pending').take(5).map((req) {
+          // Request History Section (Deduplicated to show each member once)
+          () {
+            final historyRequests = <PaymentRequestModel>[];
+            final seenUserKeys = <String>{};
+            for (final r in allRequests.where((r) => r.status != 'pending')) {
+              final cleanPhone = r.userPhone.replaceAll(RegExp(r'\D'), '');
+              final userKey = cleanPhone.isNotEmpty
+                  ? cleanPhone
+                  : (r.userName.trim().isNotEmpty ? r.userName.trim().toLowerCase() : r.id);
+              if (seenUserKeys.add(userKey)) {
+                historyRequests.add(r);
+              }
+            }
+
+            if (historyRequests.isEmpty) return const SizedBox.shrink();
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      "சமீபத்திய முடிவுகள் / Approved & History (${historyRequests.length})",
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
+                    ),
+                    Text(
+                      "Live Atlas Sync",
+                      style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Colors.green.shade700),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                ...historyRequests.map((req) {
               final isApproved = req.status == 'approved';
               return Container(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -589,12 +687,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                             "${req.userName} • ₹${req.totalAmount.toInt()} (${req.profileNames.length} வரன்கள்)",
                             style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
                           ),
+                          const SizedBox(height: 2),
                           Text(
-                            "UTR: ${req.utrNumber} • ${req.profileNames.join(', ')}",
-                            style: const TextStyle(fontSize: 11, color: Colors.grey),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            "UTR: ${req.utrNumber}${req.userPhone.isNotEmpty ? ' • Phone: ${req.userPhone}' : ''}",
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF333333), fontWeight: FontWeight.w500),
                           ),
+                          if (req.profileNames.isNotEmpty) ...[
+                            const SizedBox(height: 1),
+                            Text(
+                              req.profileNames.join(', '),
+                              style: const TextStyle(fontSize: 10.5, color: Colors.grey),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -619,7 +725,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 ),
               );
             }),
-          ],
+          ]);
+        }(),
         ],
       ),
     );
@@ -962,19 +1069,23 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
               icon: Icons.person_rounded,
               iconColor: const Color(0xFF7A132B),
               children: [
+                // Profile Image Upload Component
+                _buildPhotoUploadSection(isBride),
+                const SizedBox(height: 14),
                 _buildFormField(
                   label: "முழு பெயர் • Full Name (English) *",
                   controller: _nameCtrl,
                   hint: "e.g. Soundarya S.",
                   prefixIcon: Icons.badge_rounded,
-                  validator: (v) => v == null || v.trim().isEmpty ? "பெயர் அவசியம்" : null,
+                  validator: (v) => v == null || v.trim().isEmpty ? "முழு பெயர் அவசியம்" : null,
                 ),
                 const SizedBox(height: 10),
                 _buildFormField(
-                  label: "தமிழ் பெயர் • Tamil Name",
+                  label: "தமிழ் பெயர் • Tamil Name *",
                   controller: _nameTamilCtrl,
                   hint: "எ.கா: சௌந்தர்யா S.",
                   prefixIcon: Icons.translate_rounded,
+                  validator: (v) => v == null || v.trim().isEmpty ? "தமிழ் பெயர் அவசியம்" : null,
                 ),
                 const SizedBox(height: 10),
                 Row(
@@ -987,26 +1098,33 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                         keyboardType: TextInputType.number,
                         hint: "25",
                         prefixIcon: Icons.cake_rounded,
-                        validator: (v) => v == null || v.trim().isEmpty ? "வயது அவசியம்" : null,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return "வயது அவசியம்";
+                          final a = int.tryParse(v.trim());
+                          if (a == null || a < 18 || a > 75) return "18-75 வரை உள்ளிடவும்";
+                          return null;
+                        },
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _buildFormField(
-                        label: "உயரம் • Height",
+                        label: "உயரம் • Height *",
                         controller: _heightCtrl,
                         hint: "5' 4\"",
                         prefixIcon: Icons.height_rounded,
+                        validator: (v) => v == null || v.trim().isEmpty ? "உயரம் அவசியம்" : null,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
                 _buildFormField(
-                  label: "சமூகம் • Caste",
+                  label: "சமூகம் • Caste *",
                   controller: _casteCtrl,
                   hint: "Pandarathar (பண்டாரத்தார்)",
                   prefixIcon: Icons.diversity_3_rounded,
+                  validator: (v) => v == null || v.trim().isEmpty ? "சமூகம் அவசியம்" : null,
                 ),
               ],
             ),
@@ -1026,7 +1144,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text("நட்சத்திரம் • Star:", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024))),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Text("நட்சத்திரம் • Star", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024))),
+                              Text(" *", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
+                            ],
+                          ),
                           const SizedBox(height: 5),
                           _buildDropdown(
                             value: _selectedStar,
@@ -1043,7 +1167,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text("ராசி • Moon Sign:", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024))),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: const [
+                              Text("ராசி • Moon Sign", style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024))),
+                              Text(" *", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
+                            ],
+                          ),
                           const SizedBox(height: 5),
                           _buildDropdown(
                             value: _selectedRasi,
@@ -1060,9 +1190,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                 const SizedBox(height: 12),
 
                 // Astrological Problem / Dosham Selector (Clean Radio Cards)
-                const Text(
-                  "ஜாதக தோஷ வகை • Dosham Status:",
-                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: const [
+                    Text(
+                      "ஜாதக தோஷ வகை • Dosham Status",
+                      style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
+                    ),
+                    Text(" *", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
+                  ],
                 ),
                 const SizedBox(height: 6),
                 _buildDoshamRadioTile(
@@ -1129,16 +1265,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 10),
-
-                // Horoscope Certificate PDF Link
-                _buildFormField(
-                  label: "ஜாதக சான்றிதழ் PDF இணைப்பு / Certificate Link",
-                  controller: _r2UrlCtrl,
-                  hint: "https://.../certificates/PM-xxxx.pdf",
-                  prefixIcon: Icons.cloud_done_rounded,
-                ),
               ],
             ),
 
@@ -1171,19 +1297,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   children: [
                     Expanded(
                       child: _buildFormField(
-                        label: "நிறுவனம் • Company",
+                        label: "நிறுவனம் • Company *",
                         controller: _companyCtrl,
                         hint: "TCS / Govt",
                         prefixIcon: Icons.apartment_rounded,
+                        validator: (v) => v == null || v.trim().isEmpty ? "நிறுவனம் அவசியம்" : null,
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _buildFormField(
-                        label: "வருமானம் • Income",
+                        label: "வருமானம் • Income *",
                         controller: _incomeCtrl,
                         hint: "₹12,00,000 PA",
                         prefixIcon: Icons.currency_rupee_rounded,
+                        validator: (v) => v == null || v.trim().isEmpty ? "வருமானம் அவசியம்" : null,
                       ),
                     ),
                   ],
@@ -1201,33 +1329,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
 
             const SizedBox(height: 12),
 
-            // Section 4: Family & Contact (Unlocked for ₹25)
+            // Section 4: Family & Contact
             _buildSectionCard(
               title: "4. குடும்பம் & தொடர்பு • Contact Details",
               icon: Icons.contact_phone_rounded,
               iconColor: const Color(0xFF1B6B38),
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-                  margin: const EdgeInsets.only(bottom: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1B6B38).withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: const Color(0xFF1B6B38).withValues(alpha: 0.2)),
-                  ),
-                  child: const Row(
-                    children: [
-                      Icon(Icons.lock_clock_rounded, size: 16, color: Color(0xFF1B6B38)),
-                      SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          "பயனர் ₹25 செலுத்திய பின் மட்டுமே இவ்விவரங்கள் திறக்கப்படும்.",
-                          style: TextStyle(fontSize: 10.5, color: Color(0xFF1B6B38), fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1238,17 +1345,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                         keyboardType: TextInputType.phone,
                         hint: "+91 94884 xxxxx",
                         prefixIcon: Icons.phone_rounded,
-                        validator: (v) => v == null || v.trim().isEmpty ? "எண் அவசியம்" : null,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return "எண் அவசியம்";
+                          final digits = v.replaceAll(RegExp(r'\D'), '');
+                          if (digits.length < 10) return "10 இலக்க எண் அவசியம்";
+                          return null;
+                        },
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _buildFormField(
-                        label: "வாட்ஸ்அப் • WhatsApp",
+                        label: "வாட்ஸ்அப் • WhatsApp *",
                         controller: _whatsappCtrl,
                         keyboardType: TextInputType.phone,
                         hint: "+91 94884 xxxxx",
                         prefixIcon: Icons.chat_rounded,
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) return "வாட்ஸ்அப் அவசியம்";
+                          final digits = v.replaceAll(RegExp(r'\D'), '');
+                          if (digits.length < 10) return "10 இலக்க எண் அவசியம்";
+                          return null;
+                        },
                       ),
                     ),
                   ],
@@ -1259,19 +1377,21 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   children: [
                     Expanded(
                       child: _buildFormField(
-                        label: "தந்தை பெயர் • Father",
+                        label: "தந்தை பெயர் • Father *",
                         controller: _fatherCtrl,
                         hint: "Sundaram (Business)",
                         prefixIcon: Icons.person_outline_rounded,
+                        validator: (v) => v == null || v.trim().isEmpty ? "தந்தை பெயர் அவசியம்" : null,
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _buildFormField(
-                        label: "தாய் பெயர் • Mother",
+                        label: "தாய் பெயர் • Mother *",
                         controller: _motherCtrl,
                         hint: "Lakshmi (Homemaker)",
                         prefixIcon: Icons.person_outline_rounded,
+                        validator: (v) => v == null || v.trim().isEmpty ? "தாய் பெயர் அவசியம்" : null,
                       ),
                     ),
                   ],
@@ -1303,6 +1423,197 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
             const SizedBox(height: 24),
           ],
         ),
+      ),
+    );
+  }
+
+  // --- Photo Upload Widget ---
+  Widget _buildPhotoUploadSection(bool isBride) {
+    final hasPhoto = _uploadedImageBytes != null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF6),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: hasPhoto ? const Color(0xFF1B6B38) : const Color(0xFFEADBCE),
+          width: hasPhoto ? 1.4 : 1,
+        ),
+      ),
+      child: Row(
+        children: [
+          // Avatar / Image Preview
+          Container(
+            width: 68,
+            height: 68,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isBride ? const Color(0xFFFAF0F3) : const Color(0xFFF0F5FA),
+              border: Border.all(
+                color: hasPhoto ? const Color(0xFF1B6B38) : const Color(0xFFD4AF37),
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ClipOval(
+              child: _isUploadingToR2
+                  ? const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Color(0xFF7A132B)),
+                      ),
+                    )
+                  : hasPhoto
+                      ? Image.memory(
+                          _uploadedImageBytes!,
+                          width: 68,
+                          height: 68,
+                          fit: BoxFit.cover,
+                        )
+                      : Icon(
+                          Icons.person_rounded,
+                          size: 40,
+                          color: isBride ? const Color(0xFF7A132B) : const Color(0xFF1A3868),
+                        ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          // Info & Action Buttons
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _isUploadingToR2
+                          ? Icons.cloud_upload_rounded
+                          : (hasPhoto ? Icons.cloud_done_rounded : Icons.add_a_photo_rounded),
+                      size: 15,
+                      color: _isUploadingToR2
+                          ? const Color(0xFFD4AF37)
+                          : (hasPhoto ? const Color(0xFF1B6B38) : const Color(0xFF7A132B)),
+                    ),
+                    const SizedBox(width: 5),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _isUploadingToR2
+                                  ? "Cloudflare R2-க்கு பதிவேற்றப்படுகிறது..."
+                                  : (_uploadedR2ImageUrl != null
+                                      ? "Cloudflare R2-ல் சேமிக்கப்பட்டது ✓"
+                                      : (hasPhoto
+                                          ? "புகைப்படம் சேர்க்கப்பட்டது ✓"
+                                          : "புகைப்படம் பதிவேற்றுக • Photo")),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: _isUploadingToR2
+                                    ? const Color(0xFFB8860B)
+                                    : (hasPhoto ? const Color(0xFF1B6B38) : const Color(0xFF580B23)),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (!hasPhoto && !_isUploadingToR2)
+                            const Text(
+                              " *",
+                              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.red),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _isUploadingToR2
+                      ? "Cloudflare R2: matrimony-profile-images/profiles/..."
+                      : (_uploadedR2ImageUrl != null
+                          ? "✓ Cloudflare R2 Storage நேரடி இணைப்பு செயலில் உள்ளது"
+                          : (hasPhoto
+                              ? (_uploadedImageName ?? "photo.jpg")
+                              : "கேலரி / கேமரா வழியே வரனின் புகைப்படத்தை சேர்க்கவும்")),
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: _uploadedR2ImageUrl != null ? const Color(0xFF1B6B38) : const Color(0xFF755C62),
+                    fontWeight: _uploadedR2ImageUrl != null ? FontWeight.w600 : FontWeight.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: _isUploadingToR2 ? null : _pickProfilePhoto,
+                      icon: _isUploadingToR2
+                          ? const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            )
+                          : Icon(
+                              hasPhoto ? Icons.edit_rounded : Icons.upload_rounded,
+                              size: 14,
+                            ),
+                      label: Text(
+                        _isUploadingToR2
+                            ? "பதிவேற்றப்படுகிறது..."
+                            : (hasPhoto ? "மாற்றுக (Change)" : "படம் சேர்க்க (Upload)"),
+                        style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: hasPhoto ? const Color(0xFF1B6B38) : const Color(0xFF7A132B),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                      ),
+                    ),
+                    if (hasPhoto) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: () {
+                          setState(() {
+                            _uploadedImageBytes = null;
+                            _uploadedImageName = null;
+                            _uploadedR2ImageUrl = null;
+                            _isUploadingToR2 = false;
+                          });
+                        },
+                        icon: const Icon(Icons.delete_outline_rounded, size: 14, color: Colors.red),
+                        label: const Text(
+                          "நீக்குக",
+                          style: TextStyle(fontSize: 10.5, color: Colors.red, fontWeight: FontWeight.bold),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          side: const BorderSide(color: Colors.redAccent, width: 0.8),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1450,12 +1761,25 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
     TextInputType? keyboardType,
     FormFieldValidator<String>? validator,
   }) {
+    final bool hasAsterisk = label.contains('*');
+    final String cleanLabel = label.replaceAll('*', '').trim();
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024)),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              cleanLabel,
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: Color(0xFF332024)),
+            ),
+            if (hasAsterisk)
+              const Text(
+                " *",
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.red),
+              ),
+          ],
         ),
         const SizedBox(height: 5),
         TextFormField(
@@ -1629,6 +1953,9 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                   ? Image.asset(
                       p.displayImageAsset!,
                       fit: BoxFit.cover,
+                      cacheWidth: 96,
+                      cacheHeight: 96,
+                      filterQuality: FilterQuality.medium,
                       errorBuilder: (_, _, _) => Icon(
                         p.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
                         color: const Color(0xFF7A132B),
@@ -1730,13 +2057,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     ),
                   );
                 },
-              ),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                icon: const Icon(Icons.grid_on_rounded, color: Color(0xFFD4AF37), size: 20),
-                tooltip: "ஜாதகக் கட்டங்கள் திருத்து / Edit Charts",
-                onPressed: () => _showEditHoroscopeDialog(p),
               ),
               IconButton(
                 visualDensity: VisualDensity.compact,
@@ -1933,145 +2253,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen>
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 12),
-
-                // Credentials Card
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF9E6),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFE2CA7E), width: 1.5),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        "🔑 நிர்வாக நற்சான்றிதழ்கள் / Admin Credentials",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 10.5, color: Color(0xFF7A4B00), fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _credChip(Icons.person_rounded, "பயனர் / User", "admin"),
-                          Container(width: 1, height: 32, color: const Color(0xFFE2CA7E)),
-                          _credChip(Icons.lock_rounded, "கடவுச்சொல் / Pass", "admin123"),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _credChip(IconData icon, String label, String value) {
-    return Expanded(
-      child: Column(
-        children: [
-          Icon(icon, size: 16, color: const Color(0xFF7A4B00)),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF9A6B00))),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showEditHoroscopeDialog(ProfileModel p) {
-    Map<String, String> editingRasi = Map<String, String>.from(p.getEffectiveRasiChart());
-    Map<String, String> editingNav = Map<String, String>.from(p.getEffectiveNavamsamChart());
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        titlePadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(6),
-              decoration: BoxDecoration(
-                color: const Color(0xFF7A132B),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(Icons.grid_on_rounded, color: Colors.white, size: 18),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "ஜாதகக் கட்டங்கள் திருத்துதல்",
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                  ),
-                  Text(
-                    "${p.name} (${p.id})",
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF7A4B00), fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.close_rounded, size: 20),
-              onPressed: () => Navigator.pop(ctx),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: AdminHoroscopeTableEditor(
-              initialRasiChart: editingRasi,
-              initialNavamsamChart: editingNav,
-              onChanged: (r, n) {
-                editingRasi = r;
-                editingNav = n;
-              },
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("ரத்து செய்"),
-          ),
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1B6B38),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            icon: const Icon(Icons.check_circle_rounded, size: 16),
-            label: const Text("அட்டவணையை சேமிக்க / Save"),
-            onPressed: () {
-              final updated = p.copyWith(
-                rasiChart: editingRasi,
-                navamsamChart: editingNav,
-              );
-              widget.mockData.updateProfile(updated);
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text("${p.name} (${p.id}) ஜாதகக் கட்டங்கள் வெற்றிகரமாக சேமிக்கப்பட்டன! ✓"),
-                  backgroundColor: const Color(0xFF1B6B38),
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
-            },
-          ),
-        ],
       ),
     );
   }

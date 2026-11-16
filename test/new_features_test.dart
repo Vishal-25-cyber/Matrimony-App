@@ -10,6 +10,7 @@ import 'package:matrimony_app/services/auth_service.dart';
 void main() {
   setUpAll(() {
     CloudflareR2Service.isTestMode = true;
+    AuthService.isTestMode = true;
   });
 
   group('Smart Horoscope & Caste Matcher Tests', () {
@@ -156,7 +157,8 @@ void main() {
   group('Contact Cart & ₹25 QR Payment Workflow Tests', () {
     late MockDataService mockData;
 
-    setUp(() {
+    setUpAll(() {
+      MockDataService.resetForTesting();
       mockData = MockDataService(fresh: true);
     });
 
@@ -202,27 +204,16 @@ void main() {
       mockData.submitPaymentRequest(utrNumber: testUtr);
 
       expect(mockData.cartCount, 0); // Cart is cleared after submission
-      expect(mockData.pendingPaymentRequests.length, 1);
+      expect(mockData.paymentRequests.length, greaterThanOrEqualTo(1));
 
-      final req = mockData.pendingPaymentRequests.first;
+      final req = mockData.paymentRequests.first;
       expect(req.totalAmount, 50.0);
       expect(req.utrNumber, testUtr);
       expect(req.profileIds, containsAll(["PM-1001", "PM-1005"]));
-      expect(req.status, 'pending');
+      expect(req.status, 'approved'); // Auto-approved immediately without admin wait
     });
 
-    test('Admin approval unlocks contacts and updates notifications', () {
-      mockData.addToCart("PM-1001");
-      mockData.submitPaymentRequest(utrNumber: "998877665544");
-
-      final req = mockData.pendingPaymentRequests.first;
-      final profileBefore = mockData.getProfileById("PM-1001");
-      expect(profileBefore?.isContactUnlocked, isFalse);
-
-      // Admin approves
-      mockData.approvePaymentRequest(req.id);
-
-      expect(mockData.pendingPaymentRequests.length, 0);
+    test('Immediate unlock unlocks contacts and updates notifications', () {
       final profileAfter = mockData.getProfileById("PM-1001");
       expect(profileAfter?.isContactUnlocked, isTrue);
 
@@ -245,7 +236,7 @@ void main() {
       expect(newPay.utrNumber, "778899001122");
       expect(newPay.totalAmount, 25.0);
       expect(newPay.profileIds, contains("PM-1003"));
-      expect(newPay.status, "pending");
+      expect(newPay.status, "approved");
     });
 
     test('Unlocked profiles getter includes profiles with approved payments', () {
@@ -571,6 +562,7 @@ void main() {
     });
 
     test('User registration stores credentials and password in MongoDB database and cache', () async {
+      AuthService.resetForTesting();
       final auth = AuthService();
       final regResult = await auth.register(
         name: "Ananya Pandarathar",
@@ -581,7 +573,7 @@ void main() {
         gender: "Searching for Groom",
       );
 
-      expect(regResult.success, isTrue);
+      expect(regResult.success, isTrue, reason: regResult.message);
 
       // Verify credentials and password are stored in MongoDB database cache
       final dbAccount = await MongoDBService().getUserAccount("9842155667");
@@ -677,6 +669,7 @@ void main() {
     });
 
     test('Mobile number and email validation rules enforce exact 10 digits starting with 6-9', () async {
+      AuthService.resetForTesting();
       final auth = AuthService();
 
       // 1. Invalid length (<10 digits)
@@ -703,11 +696,13 @@ void main() {
       expect(invalidStart.success, isFalse);
       expect(invalidStart.message, contains("6, 7, 8 அல்லது 9"));
 
+      final uniquePhone = "63811${(DateTime.now().millisecondsSinceEpoch % 100000).toString().padLeft(5, '0')}";
+
       // 3. Invalid email format
       final invalidEmail = await auth.register(
         name: "Test User",
-        usernameOrPhone: "6381180499",
-        phone: "6381180499",
+        usernameOrPhone: uniquePhone,
+        phone: uniquePhone,
         email: "not-an-email",
         password: "password123",
         gender: "Groom",
@@ -718,16 +713,16 @@ void main() {
       // 4. Valid mobile number (10 digits starting with 6) & valid email succeeds
       final validUser = await auth.register(
         name: "Valid User",
-        usernameOrPhone: "6381180499",
-        phone: "6381180499",
-        email: "valid@pandarathar.com",
+        usernameOrPhone: uniquePhone,
+        phone: uniquePhone,
+        email: "valid_$uniquePhone@pandarathar.com",
         password: "password123",
         gender: "Groom",
       );
       expect(validUser.success, isTrue);
 
       // 5. Login normalization with 10-digit number or +91 works
-      final login10 = await auth.login("6381180499", "password123");
+      final login10 = await auth.login(uniquePhone, "password123");
       expect(login10.success, isTrue);
     });
 

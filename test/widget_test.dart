@@ -630,22 +630,17 @@ void main() {
       MaterialApp(
         home: ContactCartScreen(
           mockData: mockData,
-          initialTabIndex: 0,
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    // 1. App bar and tabs render cleanly
-    expect(find.text("எனது கட்டணங்கள் & தொடர்புகள்"), findsOneWidget);
-    expect(find.textContaining("Payment Details"), findsOneWidget);
+    // 1. App bar renders cleanly
+    expect(find.text("எனது கட்டணங்கள்"), findsOneWidget);
     expect(find.textContaining("கட்டணங்கள்"), findsWidgets);
-    expect(find.textContaining("தொடர்புகள்"), findsWidgets);
 
     // 2. Database storage banner and indicators
     expect(find.text("சேமிக்கப்பட்ட கட்டண விவரங்கள்"), findsOneWidget);
-    expect(find.text("MongoDB Database Synced & Stored Securely"), findsOneWidget);
-    expect(find.text("MongoDB ✓"), findsWidgets);
 
     // 3. Stored payment request card details
     expect(find.text("REQ-928104"), findsOneWidget);
@@ -660,18 +655,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text("அதிகாரப்பூர்வ கட்டண ரசீது / Official Receipt"), findsOneWidget);
-    expect(find.text("MongoDB Cloud Database Verified ✓"), findsOneWidget);
     expect(find.text("சரி / Close"), findsOneWidget);
 
     // Close receipt dialog
     await tester.tap(find.text("சரி / Close"));
     await tester.pumpAndSettle();
-
-    // 5. Switch to Unlocked Contacts tab
-    await tester.tap(find.byIcon(Icons.contacts_rounded));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining("திறக்கப்பட்ட தொடர்புகள்"), findsWidgets);
   });
 
   testWidgets('SettingsScreen renders and all options work properly', (WidgetTester tester) async {
@@ -694,7 +682,6 @@ void main() {
     // 1. Header & Section Titles
     expect(find.textContaining('Settings'), findsWidgets);
     expect(find.text('Edit Profile'), findsOneWidget);
-    expect(find.text('Privacy Options'), findsOneWidget);
     expect(find.text('Notification Preferences'), findsOneWidget);
     expect(find.text('App Language'), findsOneWidget);
     expect(find.text('Change Password'), findsOneWidget);
@@ -711,14 +698,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('தமிழ் (Tamil)'), findsWidgets);
 
-    // 3. Open Privacy Options Sheet
-    await tester.tap(find.text('Privacy Options'));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('தனியுரிமை அமைப்புகள்'), findsOneWidget);
-    await tester.tap(find.textContaining('சேமிக்க'));
-    await tester.pumpAndSettle();
-
-    // 4. Open Notification Preferences Sheet
+    // 3. Open Notification Preferences Sheet
     await tester.tap(find.text('Notification Preferences'));
     await tester.pumpAndSettle();
     expect(find.textContaining('அறிவிப்பு விருப்பங்கள்'), findsOneWidget);

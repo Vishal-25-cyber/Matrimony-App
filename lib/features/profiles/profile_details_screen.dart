@@ -862,6 +862,18 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       return Image.network(
         safeUrl,
         fit: BoxFit.cover,
+        cacheWidth: 320,
+        cacheHeight: 320,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
         errorBuilder: (_, _, _) => _buildLocalOrFallbackPhoto(profile),
       );
     }
@@ -873,6 +885,9 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       return Image.memory(
         profile.imageBytes!,
         fit: BoxFit.cover,
+        cacheWidth: 320,
+        cacheHeight: 320,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (_, _, _) => _buildAssetOrPlaceholder(profile),
       );
     }
@@ -885,6 +900,18 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
       return Image.asset(
         assetPath,
         fit: BoxFit.cover,
+        cacheWidth: 320,
+        cacheHeight: 320,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
         errorBuilder: (_, _, _) => _buildNoPhotoPlaceholder(profile),
       );
     }

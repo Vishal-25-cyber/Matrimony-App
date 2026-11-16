@@ -133,7 +133,7 @@ class HomeScreen extends StatelessWidget {
       onTap: () => onNavigateToTab(1),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 14),
-        height: 155,
+        height: 200,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFEADCCE)),
@@ -149,8 +149,9 @@ class HomeScreen extends StatelessWidget {
         child: Image.asset(
           'assets/images/tamil_wedding_banner.jpg',
           fit: BoxFit.cover,
+          alignment: const Alignment(0, -0.35),
           cacheWidth: 800,
-          filterQuality: FilterQuality.low,
+          filterQuality: FilterQuality.medium,
         ),
       ),
     );
@@ -265,17 +266,47 @@ class HomeScreen extends StatelessWidget {
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: (user.imageBytes != null && user.imageBytes!.isNotEmpty)
-                        ? Image.memory(user.imageBytes!, fit: BoxFit.cover)
+                        ? Image.memory(
+                            user.imageBytes!,
+                            fit: BoxFit.cover,
+                            cacheWidth: 80,
+                            cacheHeight: 80,
+                            filterQuality: FilterQuality.medium,
+                          )
                         : (user.profileImageUrl != null && user.profileImageUrl!.isNotEmpty)
                             ? Image.network(
                                 CloudflareR2Service().ensureDisplayableUrl(user.profileImageUrl!),
                                 fit: BoxFit.cover,
+                                cacheWidth: 80,
+                                cacheHeight: 80,
+                                filterQuality: FilterQuality.medium,
+                                frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                  if (wasSynchronouslyLoaded) return child;
+                                  return AnimatedOpacity(
+                                    opacity: frame == null ? 0 : 1,
+                                    duration: const Duration(milliseconds: 200),
+                                    curve: Curves.easeOut,
+                                    child: child,
+                                  );
+                                },
                                 errorBuilder: (_, _, _) => _buildUserAvatar(user),
                               )
                             : (user.imageAsset != null && user.imageAsset!.isNotEmpty)
                                 ? Image.asset(
                                     user.imageAsset!,
                                     fit: BoxFit.cover,
+                                    cacheWidth: 80,
+                                    cacheHeight: 80,
+                                    filterQuality: FilterQuality.medium,
+                                    frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                      if (wasSynchronouslyLoaded) return child;
+                                      return AnimatedOpacity(
+                                        opacity: frame == null ? 0 : 1,
+                                        duration: const Duration(milliseconds: 200),
+                                        curve: Curves.easeOut,
+                                        child: child,
+                                      );
+                                    },
                                     errorBuilder: (_, _, _) => _buildUserAvatar(user),
                                   )
                                 : _buildUserAvatar(user),
@@ -361,7 +392,6 @@ class HomeScreen extends StatelessWidget {
                           MaterialPageRoute(
                             builder: (_) => ContactCartScreen(
                               mockData: mockData,
-                              initialTabIndex: 1,
                             ),
                           ),
                         );

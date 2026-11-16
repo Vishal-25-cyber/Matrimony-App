@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'mongodb_service.dart';
 import 'cloudflare_r2_service.dart';
+import '../core/utils/local_auth_storage.dart';
 
 class UserAccount {
   final String name;
@@ -98,7 +99,11 @@ class AuthResult {
 class AuthService extends ChangeNotifier {
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
-  AuthService._internal();
+  AuthService._internal() {
+    _initPersistentUsers();
+  }
+
+  static bool isTestMode = false;
 
   UserAccount? _currentUser;
   UserAccount? get currentUser => _currentUser;
@@ -123,28 +128,78 @@ class AuthService extends ChangeNotifier {
       password: "password123",
       gender: "Bride",
     ),
-    UserAccount(
-      name: "Vishal",
-      username: "vishal",
-      phone: "6381180488",
-      email: "vishal@pandarathar.com",
-      password: "password123",
-      gender: "Groom",
-    ),
   ];
 
   List<UserAccount> get users => List.unmodifiable(_users);
+
+  void _addUserIfNotExists(UserAccount account) {
+    final cleanPhone = account.phone.replaceAll(RegExp(r'\D'), '');
+    final idx = _users.indexWhere((u) =>
+        (cleanPhone.isNotEmpty && u.phone.replaceAll(RegExp(r'\D'), '') == cleanPhone) ||
+        u.username.toLowerCase() == account.username.toLowerCase());
+    if (idx != -1) {
+      _users[idx] = account;
+    } else {
+      _users.add(account);
+    }
+  }
+
+  /// Load permanently stored accounts from local storage and MongoDB Atlas
+  Future<void> _initPersistentUsers() async {
+    if (isTestMode || const bool.fromEnvironment('FLUTTER_TEST')) return;
+
+    // 1. Immediately load local disk/browser localStorage accounts (0ms)
+    try {
+      final localUsers = await LocalAuthStorage.loadAllUsers();
+      for (final uMap in localUsers) {
+        final account = UserAccount.fromMap(uMap);
+        _addUserIfNotExists(account);
+      }
+    } catch (_) {}
+
+    // 2. Asynchronously load all users from MongoDB Atlas / bridge
+    try {
+      final dbUsers = await MongoDBService().getAllUserAccounts();
+      for (final uMap in dbUsers) {
+        final account = UserAccount.fromMap(uMap);
+        _addUserIfNotExists(account);
+        await LocalAuthStorage.saveUser(uMap);
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  /// Extracts the standard 10-digit mobile number, handling country code (+91) and leading 0
+  static String extract10Digits(String raw) {
+    final d = raw.replaceAll(RegExp(r'\D'), '');
+    if (d.length == 10) return d;
+    if (d.length == 12 && d.startsWith('91')) return d.substring(2);
+    if (d.length == 11 && d.startsWith('0')) return d.substring(1);
+    if (d.length > 10) return d.substring(d.length - 10);
+    return d;
+  }
 
   /// Check if a 10-digit phone number is already registered to an account
   bool isPhoneRegistered(String phone) {
     final cleanPhone = phone.trim().replaceAll(RegExp(r'\D'), '');
     if (cleanPhone.isEmpty) return false;
-    if (_users.any((u) => u.phone.replaceAll(RegExp(r'\D'), '') == cleanPhone)) {
+    final tenDigitPhone = extract10Digits(cleanPhone);
+
+    if (_users.any((u) {
+      final uClean = u.phone.replaceAll(RegExp(r'\D'), '');
+      final u10 = extract10Digits(uClean);
+      return uClean == cleanPhone ||
+          (tenDigitPhone.isNotEmpty && uClean == tenDigitPhone) ||
+          (tenDigitPhone.isNotEmpty && u10.isNotEmpty && u10 == tenDigitPhone);
+    })) {
       return true;
     }
+
     // Also check MongoDB database cache
     final cache = MongoDBService().databaseCache;
-    return cache.containsKey('user_phone_$cleanPhone') || cache.containsKey('user_phone_$phone');
+    return cache.containsKey('user_phone_$cleanPhone') ||
+        cache.containsKey('user_phone_$phone') ||
+        (tenDigitPhone.isNotEmpty && cache.containsKey('user_phone_$tenDigitPhone'));
   }
 
   /// Check if an email is already registered to an account
@@ -159,7 +214,7 @@ class AuthService extends ChangeNotifier {
     return cache.containsKey('user_email_$cleanEmail');
   }
 
-  /// Authenticate with Username/Phone/Email and Password against in-memory & MongoDB database
+  /// Authenticate with Username/Phone/Email and Password against in-memory, persistent local storage, and MongoDB
   Future<AuthResult> login(String credential, String password) async {
     final trimmedCred = credential.trim();
     final trimmedCredLower = trimmedCred.toLowerCase();
@@ -194,14 +249,18 @@ class AuthService extends ChangeNotifier {
       );
     }
 
+    final p10 = extract10Digits(cleanPhone);
+
     // 1. Instant Fast-Path: Check in-memory registered accounts
     UserAccount? matchedUser;
     for (final u in _users) {
       final uClean = u.phone.replaceAll(RegExp(r'\D'), '');
+      final u10 = extract10Digits(uClean);
       final isMatch = u.username.toLowerCase() == trimmedCredLower ||
           u.phone == trimmedCred ||
           (cleanPhone.isNotEmpty && uClean == cleanPhone) ||
-          (tenDigitPhone.isNotEmpty && uClean == tenDigitPhone) ||
+          (p10.isNotEmpty && uClean == p10) ||
+          (p10.isNotEmpty && u10.isNotEmpty && u10 == p10) ||
           (u.email.isNotEmpty && u.email.toLowerCase() == trimmedCredLower);
       if (isMatch) {
         matchedUser = u;
@@ -213,15 +272,11 @@ class AuthService extends ChangeNotifier {
       if (matchedUser.password == trimmedPass) {
         // Fast-path: Check database cache synchronously first (0ms)
         final cache = MongoDBService().databaseCache;
-        Map<String, dynamic>? cachedUser = cache['user_phone_$trimmedCred'] ??
+        final cachedUser = cache['user_phone_$trimmedCred'] ??
             (cleanPhone.isNotEmpty ? cache['user_phone_$cleanPhone'] : null) ??
             (tenDigitPhone.isNotEmpty ? cache['user_phone_$tenDigitPhone'] : null) ??
             cache['user_username_$trimmedCredLower'] ??
             cache['user_email_$trimmedCredLower'];
-
-        try {
-          cachedUser ??= await MongoDBService().getUserAccount(tenDigitPhone.isNotEmpty ? tenDigitPhone : trimmedCred);
-        } catch (_) {}
 
         if (cachedUser != null) {
           final rawImg = cachedUser['profileImageUrl']?.toString() ?? cachedUser['r2ProfileImageUrl']?.toString();
@@ -233,6 +288,7 @@ class AuthService extends ChangeNotifier {
         }
 
         _currentUser = matchedUser;
+        await LocalAuthStorage.saveUser(matchedUser.toMap());
         notifyListeners();
         return AuthResult(
           success: true,
@@ -247,7 +303,29 @@ class AuthService extends ChangeNotifier {
       }
     }
 
-    // 2. Fast-Path: Check databaseCache for stored credentials before making any network call
+    // 2. Fast-Path: Check permanent local storage (file on desktop, localStorage on web)
+    final localDoc = await LocalAuthStorage.findUser(trimmedCred);
+    if (localDoc != null) {
+      final storedPass = localDoc['password']?.toString() ?? '';
+      if (storedPass.isNotEmpty && storedPass == trimmedPass) {
+        final account = UserAccount.fromMap(localDoc);
+        _currentUser = account;
+        _addUserIfNotExists(account);
+        notifyListeners();
+        return AuthResult(
+          success: true,
+          message: "வெற்றிகரமாக உள்நுழைந்துள்ளீர்கள்! / Login Successful!",
+          user: account,
+        );
+      } else if (storedPass.isNotEmpty) {
+        return const AuthResult(
+          success: false,
+          message: "தவறான கடவுச்சொல்! / Incorrect password. Please try again.",
+        );
+      }
+    }
+
+    // 3. Fast-Path: Check databaseCache for stored credentials before making network call
     final cache = MongoDBService().databaseCache;
     Map<String, dynamic>? dbUser = cache['user_phone_$trimmedCred'] ??
         (cleanPhone.isNotEmpty ? cache['user_phone_$cleanPhone'] : null) ??
@@ -255,11 +333,11 @@ class AuthService extends ChangeNotifier {
         cache['user_username_$trimmedCredLower'] ??
         cache['user_email_$trimmedCredLower'];
 
-    // 3. If not in memory or cache, query MongoDB database via bridge
+    // 4. Query MongoDB database (Atlas / bridge) with quick 4-second timeout to avoid long loading delay
     if (dbUser == null) {
       try {
-        final lookupQuery = tenDigitPhone.isNotEmpty ? tenDigitPhone : trimmedCred;
-        dbUser = await MongoDBService().getUserAccount(lookupQuery);
+        final lookupQuery = p10.isNotEmpty ? p10 : trimmedCred;
+        dbUser = await MongoDBService().getUserAccount(lookupQuery).timeout(const Duration(seconds: 4));
       } catch (_) {}
     }
 
@@ -268,16 +346,8 @@ class AuthService extends ChangeNotifier {
       if (storedPass.isNotEmpty && storedPass == trimmedPass) {
         final account = UserAccount.fromMap(dbUser);
         _currentUser = account;
-        // Add or update in local cache list
-        final uClean = account.phone.replaceAll(RegExp(r'\D'), '');
-        final idx = _users.indexWhere((u) =>
-            (uClean.isNotEmpty && u.phone.replaceAll(RegExp(r'\D'), '') == uClean) ||
-            u.username.toLowerCase() == account.username.toLowerCase());
-        if (idx != -1) {
-          _users[idx] = account;
-        } else {
-          _users.add(account);
-        }
+        _addUserIfNotExists(account);
+        await LocalAuthStorage.saveUser(account.toMap());
         notifyListeners();
         return AuthResult(
           success: true,
@@ -298,7 +368,7 @@ class AuthService extends ChangeNotifier {
     );
   }
 
-  /// Register a new user account with strict uniqueness and validations
+  /// Register a new user account with strict uniqueness, persistent local storage and permanent MongoDB save
   Future<AuthResult> register({
     required String name,
     required String usernameOrPhone,
@@ -335,6 +405,19 @@ class AuthService extends ChangeNotifier {
       );
     }
 
+    // Also check MongoDB Atlas directly to prevent duplicate registration
+    if (!isTestMode && !const bool.fromEnvironment('FLUTTER_TEST')) {
+      try {
+        final existingDb = await MongoDBService().getUserAccount(trimmedPhone).timeout(const Duration(seconds: 4));
+        if (existingDb != null) {
+          return AuthResult(
+            success: false,
+            message: "இந்த கைபேசி எண் ($trimmedPhone) ஏற்கனவே பதிவு செய்யப்பட்டுள்ளது! தயவுசெய்து உள்நுழையவும் / Mobile number already registered. Please login.",
+          );
+        }
+      } catch (_) {}
+    }
+
     // 2. Validate email format & uniqueness if provided
     if (trimmedEmail.isNotEmpty) {
       final emailRegex = RegExp(r'^[\w\.-]+@[\w\.-]+\.[a-zA-Z]{2,}$');
@@ -369,30 +452,41 @@ class AuthService extends ChangeNotifier {
       gender: gender,
     );
 
-    _users.add(newUser);
+    _addUserIfNotExists(newUser);
     _currentUser = newUser;
     notifyListeners();
 
-    // Persist login credentials & user account directly to MongoDB Database & Cache
-    await MongoDBService().updateUserAccount(newUser.toMap());
+    // 1. Immediately save to permanent local storage (file on desktop/mobile, localStorage on web)
+    await LocalAuthStorage.saveUser(newUser.toMap());
 
-    // Also persist initial user profile in MongoDB so their specific details are stored
-    final gLower = gender.toLowerCase().trim();
-    final bool isUserBride = gLower.contains('searching for groom') ||
-        (!gLower.contains('searching for bride') && (gLower == 'bride' || gLower.contains('female')));
-    final String resolvedGender = isUserBride ? "Bride" : "Groom";
-    final profileDoc = {
-      'id': 'PM${trimmedPhone.length >= 4 ? trimmedPhone.substring(trimmedPhone.length - 4) : DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
-      'name': trimmedName,
-      'phone': trimmedPhone,
-      'email': trimmedEmail,
-      'gender': resolvedGender,
-      'community': 'பண்டாரத்தார்',
-      'subSect': 'பண்டாரத்தார் (Pandarathar)',
-      'caste': 'Pandarathar (பண்டாரத்தார்)',
-      'updatedAt': DateTime.now().toIso8601String(),
-    };
-    await MongoDBService().updateUserProfile(profileDoc);
+    // 2. Persist login credentials & user account permanently to MongoDB Database
+    if (!isTestMode && !const bool.fromEnvironment('FLUTTER_TEST')) {
+      await MongoDBService().updateUserAccount(newUser.toMap());
+
+      // 3. Also persist initial user profile in MongoDB so their specific details are stored
+      final gLower = gender.toLowerCase().trim();
+      final bool isUserBride = gLower.contains('searching for groom') ||
+          (!gLower.contains('searching for bride') && (gLower == 'bride' || gLower.contains('female')));
+      final String resolvedGender = isUserBride ? "Bride" : "Groom";
+      final profileDoc = {
+        'id': 'PM${trimmedPhone.length >= 4 ? trimmedPhone.substring(trimmedPhone.length - 4) : DateTime.now().millisecondsSinceEpoch.toString().substring(7)}',
+        'name': trimmedName,
+        'phone': trimmedPhone,
+        'email': trimmedEmail,
+        'gender': resolvedGender,
+        'community': 'பண்டாரத்தார்',
+        'subSect': 'பண்டாரத்தார் (Pandarathar)',
+        'caste': 'Pandarathar (பண்டாரத்தார்)',
+        'updatedAt': DateTime.now().toIso8601String(),
+      };
+      await MongoDBService().updateUserProfile(profileDoc);
+    } else {
+      MongoDBService().putInCache('user_phone_$trimmedPhone', newUser.toMap());
+      MongoDBService().putInCache('user_username_${newUser.username.toLowerCase()}', newUser.toMap());
+      if (trimmedEmail.isNotEmpty) {
+        MongoDBService().putInCache('user_email_$trimmedEmail', newUser.toMap());
+      }
+    }
 
     return AuthResult(
       success: true,
@@ -458,16 +552,19 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
 
     // Persist to MongoDB database
-    final dbResult = await MongoDBService().updateUserAccount(updatedUser.toMap());
+    bool dbResult = true;
+    if (!const bool.fromEnvironment('FLUTTER_TEST')) {
+      dbResult = await MongoDBService().updateUserAccount(updatedUser.toMap());
 
-    // Also persist profileImageUrl to profiles collection in MongoDB so all profile screens stay in sync
-    if (updatedUser.profileImageUrl != null && updatedUser.profileImageUrl!.isNotEmpty) {
-      await MongoDBService().updateUserProfile({
-        'phone': updatedUser.phone,
-        'profileImageUrl': updatedUser.profileImageUrl,
-        'r2ProfileImageUrl': updatedUser.profileImageUrl,
-        'hasCustomImage': true,
-      });
+      // Also persist profileImageUrl to profiles collection in MongoDB so all profile screens stay in sync
+      if (updatedUser.profileImageUrl != null && updatedUser.profileImageUrl!.isNotEmpty) {
+        await MongoDBService().updateUserProfile({
+          'phone': updatedUser.phone,
+          'profileImageUrl': updatedUser.profileImageUrl,
+          'r2ProfileImageUrl': updatedUser.profileImageUrl,
+          'hasCustomImage': true,
+        });
+      }
     }
 
     return dbResult;
@@ -517,6 +614,33 @@ class AuthService extends ChangeNotifier {
   void logout() {
     _currentUser = null;
     notifyListeners();
+  }
+
+  /// Reset state for unit testing
+  static void resetForTesting() {
+    isTestMode = true;
+    _instance._currentUser = null;
+    _instance._users.clear();
+    _instance._users.addAll([
+      UserAccount(
+        name: "Karthik Sundaram",
+        username: "demo",
+        phone: "9876543210",
+        email: "demo@pandarathar.com",
+        password: "password123",
+        gender: "Groom",
+      ),
+      UserAccount(
+        name: "Soundarya R.",
+        username: "soundarya",
+        phone: "9876501234",
+        email: "soundarya@pandarathar.com",
+        password: "password123",
+        gender: "Bride",
+      ),
+    ]);
+    LocalAuthStorage.clearAllUsers();
+    MongoDBService().clearDatabaseCache();
   }
 }
 

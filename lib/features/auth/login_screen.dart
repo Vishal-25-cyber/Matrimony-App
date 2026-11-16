@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/constants/app_constants.dart';
@@ -43,6 +44,31 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isSigningUp = false;
   String? _signUpStepErrorMessage;
 
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _precacheImages(context);
+      }
+    });
+  }
+
+  void _precacheImages(BuildContext context) {
+    const assets = [
+      'assets/images/tamil_wedding_banner.jpg',
+      'assets/images/bride_soundarya.jpg',
+      'assets/images/doctor_kavitha.jpg',
+      'assets/images/bride_sneha.jpg',
+      'assets/images/user_karthik.jpg',
+      'assets/images/founder_arumugam.jpg',
+      'assets/images/wedding_couple.jpg',
+      'assets/images/app_crest.jpg',
+    ];
+    for (final a in assets) {
+      precacheImage(AssetImage(a), context).catchError((_) {});
+    }
+  }
 
   @override
   void dispose() {
@@ -114,13 +140,11 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       );
 
-      // Immediate synchronous sync so current user profile is populated instantly
+      // Immediate synchronous sync so current user profile is populated instantly (0ms)
       MockDataService().syncWithAuth(result.user);
 
-      // Fetch fresh Atlas profile, avatar image, shortlists, and payments before navigating
-      try {
-        await MockDataService().syncWithAuthAsync(result.user).timeout(const Duration(seconds: 4));
-      } catch (_) {}
+      // Trigger background sync for fresh Atlas data without blocking UI transition
+      unawaited(MockDataService().syncWithAuthAsync(result.user));
 
       if (!mounted) return;
 

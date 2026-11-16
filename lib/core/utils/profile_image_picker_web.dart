@@ -2,6 +2,7 @@
 import 'dart:async';
 import 'dart:html' as html;
 import 'dart:typed_data';
+import 'package:flutter/material.dart';
 
 class ProfileImagePickResult {
   final String fileName;
@@ -15,7 +16,7 @@ class ProfileImagePickResult {
   });
 }
 
-Future<ProfileImagePickResult?> pickProfileImage() async {
+Future<ProfileImagePickResult?> pickProfileImage({BuildContext? context}) async {
   final completer = Completer<ProfileImagePickResult?>();
   final uploadInput = html.FileUploadInputElement();
   uploadInput.accept = 'image/*';

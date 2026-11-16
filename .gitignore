@@ -45,5 +45,13 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
+# Android Keystore and Signing Keys (NEVER commit to VCS)
+*.jks
+*.keystore
+android/key.properties
+key.properties
+.user_credentials_cache.json
+*.cache.json
+
 # Widget Preview related
 .widget_preview/

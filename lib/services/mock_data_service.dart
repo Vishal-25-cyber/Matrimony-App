@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/profile_model.dart';
 import '../models/notification_model.dart';
@@ -20,16 +21,14 @@ class MockDataService extends ChangeNotifier {
     _instance = null;
     MongoDBService().clearDatabaseCache();
     CloudflareR2Service.isTestMode = true;
-    AuthService().logout();
+    AuthService.resetForTesting();
   }
   MockDataService._internal() {
     AuthService().addListener(_syncFromAuth);
     _syncFromAuth();
-    for (final p in _paymentRequests) {
-      MongoDBService().savePaymentRequest(p.toMap());
-    }
     if (!const bool.fromEnvironment('FLUTTER_TEST')) {
       _loadProfilesFromAtlasAsync();
+      loadAllPaymentRequestsFromAtlas();
     }
   }
 
@@ -227,7 +226,6 @@ class MockDataService extends ChangeNotifier {
     // 4. Load shortlist / likes strictly for THIS user alone
     final cachedShortlist = MongoDBService().databaseCache['shortlist_${currentUser.id}'] ??
         (cleanPhone.isNotEmpty ? MongoDBService().databaseCache['shortlist_$cleanPhone'] : null);
-    final approvedIds = approvedPaymentProfileIds;
     if (cachedShortlist != null) {
       final rawIds = cachedShortlist['profileIds'];
       final List<String> profileIdsList = (rawIds is List)
@@ -235,30 +233,12 @@ class MockDataService extends ChangeNotifier {
           : (rawIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
       final ids = Set<String>.from(profileIdsList);
       for (var p in _profiles) {
-        p.isShortlisted = ids.contains(p.id) || approvedIds.contains(p.id);
+        p.isShortlisted = ids.contains(p.id);
       }
     } else {
-      // Check if user is the same user or if we should preserve current session shortlist
-      final isSameUser = cleanPhone.isNotEmpty && currentUser.phone.replaceAll(RegExp(r'\D'), '') == cleanPhone;
-      if (isSameUser) {
-        for (var p in _profiles) {
-          if (approvedIds.contains(p.id)) {
-            p.isShortlisted = true;
-          }
-        }
-        final currentLiked = _profiles.where((p) => p.isShortlisted).map((p) => p.id).toList();
-        if (currentLiked.isNotEmpty) {
-          MongoDBService().saveShortlist(
-            userId: currentUser.id,
-            userPhone: currentUser.phone,
-            profileIds: currentLiked,
-          );
-        }
-      } else {
-        // Different user account without a cached shortlist
-        for (var p in _profiles) {
-          p.isShortlisted = approvedIds.contains(p.id);
-        }
+      // New user or no shortlist found in cache: Start completely fresh (NO default likes)
+      for (var p in _profiles) {
+        p.isShortlisted = false;
       }
     }
 
@@ -272,10 +252,19 @@ class MockDataService extends ChangeNotifier {
   /// Asynchronously fetch saved shortlist and payment requests from MongoDB Atlas
   Future<void> _loadShortlistAndPaymentsFromAtlasAsync(String userId, String cleanPhone) async {
     try {
-      // 1. Fetch payments from Atlas first so approved contacts are known
-      final payments = await MongoDBService().getPaymentRequests(userId: userId, userPhone: cleanPhone);
+      // 1. Fetch payments & shortlist from Atlas concurrently
+      final results = await Future.wait([
+        MongoDBService().getPaymentRequests(userId: userId, userPhone: cleanPhone),
+        MongoDBService().getShortlist(userId, userPhone: cleanPhone),
+      ]);
+
+      final payments = results[0] as List<Map<String, dynamic>>;
+      final doc = results[1] as Map<String, dynamic>?;
+
       if (payments.isNotEmpty) {
-        bool paymentsChanged = false;
+        // Real user payment requests exist in database. Remove dummy seed payment to prevent duplicate/inflated total
+        _paymentRequests.removeWhere((r) => r.id == 'REQ-928104');
+        bool paymentsChanged = true;
         for (final pMap in payments) {
           final id = pMap['id']?.toString() ?? '';
           if (id.isEmpty) continue;
@@ -315,7 +304,6 @@ class MockDataService extends ChangeNotifier {
               if (pIdx != -1) {
                 _profiles[pIdx].isContactUnlocked = true;
                 _profiles[pIdx].isHoroscopeUnlocked = true;
-                _profiles[pIdx].isShortlisted = true;
               }
             }
           }
@@ -325,18 +313,16 @@ class MockDataService extends ChangeNotifier {
         }
       }
 
-      // 2. Fetch shortlist from Atlas
-      final doc = await MongoDBService().getShortlist(userId, userPhone: cleanPhone);
+      // 2. Process shortlist from Atlas
       final rawIds = doc?['profileIds'];
       final List<String> profileIdsList = (rawIds is List)
           ? rawIds.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
           : (rawIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
       final ids = Set<String>.from(profileIdsList);
-      final approved = approvedPaymentProfileIds;
 
       bool changed = false;
       for (var p in _profiles) {
-        final shouldBeLiked = ids.contains(p.id) || approved.contains(p.id);
+        final shouldBeLiked = ids.contains(p.id);
         if (p.isShortlisted != shouldBeLiked) {
           p.isShortlisted = shouldBeLiked;
           changed = true;
@@ -357,10 +343,14 @@ class MockDataService extends ChangeNotifier {
     final cleanPhone = authUser.phone.replaceAll(RegExp(r'\D'), '');
     final userId = "PM-${cleanPhone.length >= 4 ? cleanPhone.substring(cleanPhone.length - 4) : '1000'}";
 
-    // 1. Fetch user account from Atlas (contains profileImageUrl)
-    final userDoc = await MongoDBService().getUserAccount(cleanPhone.isNotEmpty ? cleanPhone : authUser.username);
-    // 2. Fetch profile from Atlas
-    final dbDoc = await MongoDBService().getProfileByIdOrPhone(cleanPhone.isNotEmpty ? cleanPhone : userId);
+    // 1. Fetch user account & profile from Atlas concurrently
+    final results = await Future.wait([
+      MongoDBService().getUserAccount(cleanPhone.isNotEmpty ? cleanPhone : authUser.username),
+      MongoDBService().getProfileByIdOrPhone(cleanPhone.isNotEmpty ? cleanPhone : userId),
+    ]);
+
+    final userDoc = results[0];
+    final dbDoc = results[1];
 
     final rawImg = userDoc?['profileImageUrl']?.toString() ??
         userDoc?['r2ProfileImageUrl']?.toString() ??
@@ -1469,6 +1459,18 @@ class MockDataService extends ChangeNotifier {
     notifyListeners();
   }
 
+  void deleteNotification(int index) {
+    if (index >= 0 && index < _notifications.length) {
+      _notifications.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  void clearAllNotifications() {
+    _notifications.clear();
+    notifyListeners();
+  }
+
   void updateUserProfile(ProfileModel updated) {
     currentUser = updated;
     final index = _profiles.indexWhere((p) =>
@@ -1546,6 +1548,63 @@ class MockDataService extends ChangeNotifier {
   List<PaymentRequestModel> get paymentRequests =>
       List.unmodifiable(_paymentRequests);
 
+  /// Asynchronously load all payment requests from MongoDB Atlas across all users
+  Future<void> loadAllPaymentRequestsFromAtlas() async {
+    try {
+      final payments = await MongoDBService().getPaymentRequests();
+      if (payments.isNotEmpty) {
+        // Real user payment requests exist in database. Remove dummy seed payment and any deleted records
+        final remoteIds = payments.map((p) => p['id']?.toString() ?? '').toSet();
+        _paymentRequests.removeWhere((r) => r.id == 'REQ-928104' || (r.status == 'approved' && !remoteIds.contains(r.id)));
+        bool changed = false;
+
+        for (final pMap in payments) {
+          final id = pMap['id']?.toString() ?? '';
+          if (id.isEmpty || id == 'REQ-928104') continue;
+
+          final reqModel = PaymentRequestModel.fromMap(pMap);
+          final existingIdx = _paymentRequests.indexWhere((r) => r.id == id);
+          if (existingIdx != -1) {
+            _paymentRequests[existingIdx] = reqModel;
+          } else {
+            _paymentRequests.add(reqModel);
+          }
+          changed = true;
+
+          // Unlock profiles if approved
+          if (reqModel.status == 'approved') {
+            for (final pid in reqModel.profileIds) {
+              final pIdx = _profiles.indexWhere((p) => p.id == pid);
+              if (pIdx != -1) {
+                _profiles[pIdx].isContactUnlocked = true;
+                _profiles[pIdx].isHoroscopeUnlocked = true;
+              }
+            }
+          }
+        }
+
+        // Sort descending by timestamp (newest first)
+        _paymentRequests.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+
+        if (changed) {
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print("Error loading all payment requests from Atlas: $e");
+    }
+  }
+
+  /// Payment requests belonging specifically to the current user
+  List<PaymentRequestModel> get currentUserPaymentRequests {
+    final cleanCurrentPhone = currentUser.phone.replaceAll(RegExp(r'\D'), '');
+    return _paymentRequests.where((r) {
+      if (r.userId == currentUser.id) return true;
+      final rPhone = r.userPhone.replaceAll(RegExp(r'\D'), '');
+      return cleanCurrentPhone.isNotEmpty && rPhone.isNotEmpty && rPhone == cleanCurrentPhone;
+    }).toList();
+  }
+
   List<PaymentRequestModel> get pendingPaymentRequests =>
       _paymentRequests.where((r) => r.status == 'pending').toList();
 
@@ -1614,9 +1673,19 @@ class MockDataService extends ChangeNotifier {
       totalAmount: cartList.length * 25.0,
       utrNumber: utrNumber,
       timestamp: DateTime.now(),
-      status: 'pending',
+      status: 'approved',   // Auto-approve immediately — no admin wait
     );
+    _paymentRequests.removeWhere((r) => r.id == 'REQ-928104');
     _paymentRequests.insert(0, newRequest);
+
+    // Immediately unlock all profiles in the cart
+    for (final p in cartList) {
+      final pIdx = _profiles.indexWhere((pr) => pr.id == p.id);
+      if (pIdx != -1) {
+        _profiles[pIdx].isContactUnlocked = true;
+        _profiles[pIdx].isHoroscopeUnlocked = true;
+      }
+    }
     _cartProfileIds.clear();
 
     // Persist payment to MongoDB database
@@ -1626,8 +1695,8 @@ class MockDataService extends ChangeNotifier {
       0,
       NotificationModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: "கட்டணம் சமர்ப்பிக்கப்பட்டது / Payment Submitted",
-        message: "₹${newRequest.totalAmount.toInt()} கட்டணம் நிர்வாகி ஒப்புதலுக்கு அனுப்பப்பட்டுள்ளது (UTR: $utrNumber). சரிபார்க்கப்பட்டவுடன் தொடர்பு எண்கள் திறக்கப்படும்.",
+        title: "தொடர்பு விவரங்கள் திறக்கப்பட்டது! / Contacts Unlocked",
+        message: "₹${newRequest.totalAmount.toInt()} கட்டணம் வெற்றிகரமாக பதிவு செய்யப்பட்டது (UTR: $utrNumber). தொடர்பு எண்கள் இப்போதே திறக்கப்பட்டன!",
         timeAgo: "Just now",
         type: NotificationType.unlock,
       ),
@@ -1653,9 +1722,19 @@ class MockDataService extends ChangeNotifier {
       totalAmount: amount,
       utrNumber: utrNumber.trim(),
       timestamp: DateTime.now(),
-      status: 'pending',
+      status: 'approved',   // Auto-approve immediately — no admin wait
     );
+    _paymentRequests.removeWhere((r) => r.id == 'REQ-928104');
     _paymentRequests.insert(0, newRequest);
+
+    // Immediately unlock all profiles
+    for (final pid in profileIds) {
+      final pIdx = _profiles.indexWhere((p) => p.id == pid);
+      if (pIdx != -1) {
+        _profiles[pIdx].isContactUnlocked = true;
+        _profiles[pIdx].isHoroscopeUnlocked = true;
+      }
+    }
 
     // Persist payment to MongoDB database
     MongoDBService().savePaymentRequest(newRequest.toMap());
@@ -1670,8 +1749,8 @@ class MockDataService extends ChangeNotifier {
       0,
       NotificationModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: "கட்டணம் சமர்ப்பிக்கப்பட்டது / Payment Submitted",
-        message: "₹${amount.toInt()} கட்டணம் நிர்வாகி ஒப்புதலுக்கு அனுப்பப்பட்டுள்ளது (UTR: $utrNumber). சரிபார்க்கப்பட்டவுடன் தொடர்பு எண்கள் திறக்கப்படும்.",
+        title: "தொடர்பு விவரங்கள் திறக்கப்பட்டது! / Contacts Unlocked",
+        message: "₹${amount.toInt()} கட்டணம் வெற்றிகரமாக பதிவு செய்யப்பட்டது (UTR: $utrNumber). ${profileNames.join(', ')} வரன்களின் தொடர்பு எண்கள் இப்போதே திறக்கப்பட்டன!",
         timeAgo: "Just now",
         type: NotificationType.unlock,
       ),
@@ -1695,17 +1774,28 @@ class MockDataService extends ChangeNotifier {
       totalAmount: amount,
       utrNumber: utrNumber,
       timestamp: DateTime.now(),
-      status: 'pending',
+      status: 'approved',   // Auto-approve immediately
     );
+    _paymentRequests.removeWhere((r) => r.id == 'REQ-928104');
     _paymentRequests.insert(0, newRequest);
+
+    // Immediately unlock profiles
+    for (final pid in profileIds) {
+      final pIdx = _profiles.indexWhere((p) => p.id == pid);
+      if (pIdx != -1) {
+        _profiles[pIdx].isContactUnlocked = true;
+        _profiles[pIdx].isHoroscopeUnlocked = true;
+      }
+    }
+
     MongoDBService().savePaymentRequest(newRequest.toMap());
 
     _notifications.insert(
       0,
       NotificationModel(
         id: DateTime.now().millisecondsSinceEpoch.toString(),
-        title: "கட்டணம் பதிவு செய்யப்பட்டது / Payment Recorded",
-        message: "₹${amount.toInt()} கட்டணம் (UTR: $utrNumber) தரவுத்தளத்தில் பதிவு செய்யப்பட்டு நிர்வாகி ஒப்புதலுக்கு அனுப்பப்பட்டது.",
+        title: "தொடர்பு விவரங்கள் திறக்கப்பட்டது! / Contacts Unlocked",
+        message: "₹${amount.toInt()} கட்டணம் வெற்றிகரமாக பதிவு செய்யப்பட்டது (UTR: $utrNumber). தொடர்பு எண்கள் இப்போதே திறக்கப்பட்டன!",
         timeAgo: "Just now",
         type: NotificationType.unlock,
       ),

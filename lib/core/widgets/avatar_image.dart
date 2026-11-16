@@ -68,6 +68,9 @@ class AvatarImage extends StatelessWidget {
                     width: size,
                     height: size,
                     fit: BoxFit.cover,
+                    cacheWidth: (size * 2).toInt(),
+                    cacheHeight: (size * 2).toInt(),
+                    filterQuality: FilterQuality.medium,
                   )
                 : hasCustomUrl
                     ? Image.network(
@@ -77,6 +80,16 @@ class AvatarImage extends StatelessWidget {
                         fit: BoxFit.cover,
                         cacheWidth: (size * 2).toInt(),
                         cacheHeight: (size * 2).toInt(),
+                        filterQuality: FilterQuality.medium,
+                        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                          if (wasSynchronouslyLoaded) return child;
+                          return AnimatedOpacity(
+                            opacity: frame == null ? 0 : 1,
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOut,
+                            child: child,
+                          );
+                        },
                         errorBuilder: (context, error, stackTrace) => Center(
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,

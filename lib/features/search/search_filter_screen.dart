@@ -194,7 +194,9 @@ class _SearchFilterScreenState extends State<SearchFilterScreen> {
         ? "பொருத்தமான வரன்கள் (${results.length})"
         : "தேடல் முடிவுகள் (${results.length})";
 
-    Navigator.push(
+    // pushReplacement ensures every Search tap replaces whatever is currently
+    // on the navigation stack with a brand-new, fresh results page.
+    Navigator.pushReplacement(
       context,
       MaterialPageRoute(
         builder: (_) => SearchResultsScreen(

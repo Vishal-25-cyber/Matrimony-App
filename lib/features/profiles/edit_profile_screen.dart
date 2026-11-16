@@ -107,7 +107,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _handlePickImage() async {
-    final result = await pickProfileImage();
+    final result = await pickProfileImage(context: context);
     if (result != null) {
       setState(() {
         _imageBytes = result.bytes;
@@ -596,7 +596,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     controller: _phoneController,
                     icon: Icons.phone_iphone_rounded,
                     keyboardType: TextInputType.phone,
-                    hint: '6381180488',
+                    hint: '9876543210',
                     prefixText: '+91 ',
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,

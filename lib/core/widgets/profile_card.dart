@@ -349,6 +349,18 @@ class ProfileCard extends StatelessWidget {
       return Image.network(
         safeUrl,
         fit: BoxFit.cover,
+        cacheWidth: 150,
+        cacheHeight: 184,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
         errorBuilder: (_, _, _) => _buildLocalOrFallbackAvatar(),
       );
     }
@@ -360,6 +372,9 @@ class ProfileCard extends StatelessWidget {
       return Image.memory(
         profile.imageBytes!,
         fit: BoxFit.cover,
+        cacheWidth: 150,
+        cacheHeight: 184,
+        filterQuality: FilterQuality.medium,
         errorBuilder: (_, _, _) => _buildAssetOrFallbackAvatar(),
       );
     }
@@ -372,6 +387,18 @@ class ProfileCard extends StatelessWidget {
       return Image.asset(
         asset,
         fit: BoxFit.cover,
+        cacheWidth: 150,
+        cacheHeight: 184,
+        filterQuality: FilterQuality.medium,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded) return child;
+          return AnimatedOpacity(
+            opacity: frame == null ? 0 : 1,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+            child: child,
+          );
+        },
         errorBuilder: (_, _, _) => _buildFallbackAvatar(74, 92),
       );
     }

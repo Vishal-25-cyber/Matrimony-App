@@ -42,7 +42,7 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
   }
 
   Future<void> _handleDirectPhotoPick() async {
-    final result = await pickProfileImage();
+    final result = await pickProfileImage(context: context);
     if (result != null) {
       setState(() => _isUploadingPhoto = true);
 
@@ -413,7 +413,6 @@ class _MyProfileScreenState extends State<MyProfileScreen> {
                         MaterialPageRoute(
                           builder: (_) => ContactCartScreen(
                             mockData: widget.mockData,
-                            initialTabIndex: 0,
                           ),
                         ),
                       );

@@ -3,11 +3,9 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../services/mock_data_service.dart';
 import '../../services/auth_service.dart';
-import '../../services/mongodb_service.dart';
 import '../auth/login_screen.dart';
 import '../profiles/edit_profile_screen.dart';
 import '../contacts/contact_us_screen.dart';
-import '../admin/admin_dashboard_screen.dart';
 import '../../core/utils/navigation_helper.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -22,10 +20,6 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   // Settings State
   String _selectedLanguage = 'Tamil / English';
-  String _phoneVisibility = 'unlocked'; // 'unlocked', 'all', 'hidden'
-  String _photoVisibility = 'all'; // 'all', 'request', 'hidden'
-  String _horoscopeVisibility = 'matched'; // 'matched', 'protected'
-  bool _notifyShortlist = true;
 
   // Notification toggles
   bool _notifyNewMatches = true;
@@ -89,15 +83,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
 
-          // 2. Privacy Options
-          _buildListTile(
-            icon: Icons.lock_outline_rounded,
-            title: 'Privacy Options',
-            subtitle: _getPrivacySubtitle(),
-            onTap: () => _showPrivacyOptionsSheet(context),
-          ),
-
-          // 3. Notification Preferences
+          // 2. Notification Preferences
           _buildListTile(
             icon: Icons.notifications_none_rounded,
             title: 'Notification Preferences',
@@ -153,24 +139,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildListTile(
             icon: Icons.shield_outlined,
             title: 'Privacy Policy',
-            subtitle: 'Confidentiality, MongoDB encryption & data safety',
+            subtitle: 'உங்கள் தரவு பாதுகாப்பாக வைக்கப்படுகிறது • Data Privacy & Security',
             onTap: () => _showPrivacyPolicyDialog(context),
           ),
 
-          // 9. Admin Portal (Payment Approvals & Candidate Management)
-          _buildListTile(
-            icon: Icons.admin_panel_settings_rounded,
-            title: 'நிர்வாக தளம் / Admin Portal',
-            subtitle: 'Payment approvals, verify UTR & manage candidates',
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AdminDashboardScreen(mockData: widget.mockData),
-                ),
-              );
-            },
-          ),
+
 
           const SizedBox(height: 28),
 
@@ -211,15 +184,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-  }
-
-  String _getPrivacySubtitle() {
-    if (_phoneVisibility == 'unlocked') {
-      return 'Phone: Unlocked Members • Photos: $_photoVisibility';
-    } else if (_phoneVisibility == 'hidden') {
-      return 'Phone: Hidden • Photos: $_photoVisibility';
-    }
-    return 'Phone: All Members • Photos: $_photoVisibility';
   }
 
   Widget _buildSectionTitle(String title) {
@@ -291,284 +255,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   // ==========================================
-  // 1. PRIVACY OPTIONS SHEET
-  // ==========================================
-  void _showPrivacyOptionsSheet(BuildContext context) {
-    String tempPhone = _phoneVisibility;
-    String tempPhoto = _photoVisibility;
-    String tempHoro = _horoscopeVisibility;
-    bool tempShortlist = _notifyShortlist;
-
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            return Material(
-              color: Colors.white,
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-              clipBehavior: Clip.antiAlias,
-              child: Container(
-                padding: EdgeInsets.only(
-                  left: 20,
-                  right: 20,
-                  top: 20,
-                  bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-                ),
-                child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    const Row(
-                      children: [
-                        Icon(Icons.lock_rounded, color: Color(0xFF7A132B), size: 22),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            "தனியுரிமை அமைப்புகள் / Privacy Options",
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF580B23),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Manage who can view your mobile number, photos & horoscope",
-                      style: TextStyle(fontSize: 11.5, color: Color(0xFF7A686B)),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Phone visibility
-                    const Text(
-                      "1. தொலைபேசி எண் பார்வை / Mobile Number Visibility",
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                    ),
-                    const SizedBox(height: 6),
-                    _buildRadioTile<String>(
-                      title: "பணம் செலுத்தி திறக்கப்பட்டவர்களுக்கு மட்டும் (Default)",
-                      subtitle: "Only members who unlock your contact via ₹25 payment",
-                      value: "unlocked",
-                      groupValue: tempPhone,
-                      onChanged: (val) => setSheetState(() => tempPhone = val!),
-                    ),
-                    _buildRadioTile<String>(
-                      title: "அனைத்து பதிவுசெய்த உறுப்பினர்களுக்கும்",
-                      subtitle: "Visible to all verified Pandarathar community members",
-                      value: "all",
-                      groupValue: tempPhone,
-                      onChanged: (val) => setSheetState(() => tempPhone = val!),
-                    ),
-                    _buildRadioTile<String>(
-                      title: "மறைக்கப்பட்டது / Hidden",
-                      subtitle: "Do not show phone number publicly",
-                      value: "hidden",
-                      groupValue: tempPhone,
-                      onChanged: (val) => setSheetState(() => tempPhone = val!),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // Photo visibility
-                    const Text(
-                      "2. புகைப்படம் பார்வை / Photo Visibility",
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                    ),
-                    const SizedBox(height: 6),
-                    _buildRadioTile<String>(
-                      title: "அனைத்து உறுப்பினர்களுக்கும் தெரியும் (Visible to All)",
-                      subtitle: "Show photo to all registered members",
-                      value: "all",
-                      groupValue: tempPhoto,
-                      onChanged: (val) => setSheetState(() => tempPhoto = val!),
-                    ),
-                    _buildRadioTile<String>(
-                      title: "கோரிக்கைக்குப் பின் மட்டும் (On Request Only)",
-                      subtitle: "Show photo only after you accept their request",
-                      value: "request",
-                      groupValue: tempPhoto,
-                      onChanged: (val) => setSheetState(() => tempPhoto = val!),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // Horoscope visibility
-                    const Text(
-                      "3. ஜாதகக் குறிப்பு பார்வை / Horoscope Visibility",
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                    ),
-                    const SizedBox(height: 6),
-                    _buildRadioTile<String>(
-                      title: "பொருத்தம் உள்ள நட்சத்திரங்களுக்கு (Public to Match)",
-                      subtitle: "Visible to compatible star & rasi candidates",
-                      value: "matched",
-                      groupValue: tempHoro,
-                      onChanged: (val) => setSheetState(() => tempHoro = val!),
-                    ),
-                    _buildRadioTile<String>(
-                      title: "பாதுகாக்கப்பட்டது (Protected on Request)",
-                      subtitle: "Only unlocked via request",
-                      value: "protected",
-                      groupValue: tempHoro,
-                      onChanged: (val) => setSheetState(() => tempHoro = val!),
-                    ),
-
-                    const SizedBox(height: 14),
-
-                    // Shortlist notification toggle
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      activeTrackColor: const Color(0xFF1B6B38),
-                      title: const Text(
-                        "விருப்பப்பட்டியலில் சேர்த்தால் தெரிவிக்கவும்",
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Color(0xFF580B23)),
-                      ),
-                      subtitle: const Text(
-                        "Notify me when someone shortlists my profile",
-                        style: TextStyle(fontSize: 11, color: Color(0xFF7A686B)),
-                      ),
-                      value: tempShortlist,
-                      onChanged: (val) => setSheetState(() => tempShortlist = val),
-                    ),
-
-                    const SizedBox(height: 18),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF7A132B),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        elevation: 2,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          _phoneVisibility = tempPhone;
-                          _photoVisibility = tempPhoto;
-                          _horoscopeVisibility = tempHoro;
-                          _notifyShortlist = tempShortlist;
-                        });
-
-                        // Persist to MongoDB cache
-                        MongoDBService().updateUserProfile({
-                          'id': widget.mockData.currentUser.id,
-                          'phoneVisibility': tempPhone,
-                          'photoVisibility': tempPhoto,
-                          'horoscopeVisibility': tempHoro,
-                          'notifyShortlist': tempShortlist,
-                        });
-
-                        Navigator.pop(ctx);
-
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Row(
-                              children: [
-                                Icon(Icons.check_circle_rounded, color: Colors.white, size: 20),
-                                SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    "✓ தனியுரிமை அமைப்புகள் தரவுத்தளத்தில் புதுப்பிக்கப்பட்டது! (Privacy Saved)",
-                                    style: TextStyle(fontSize: 12.5),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            backgroundColor: Color(0xFF1B6B38),
-                            behavior: SnackBarBehavior.floating,
-                          ),
-                        );
-                      },
-                      child: const Text(
-                        "சேமிக்க / Save Privacy Settings",
-                        style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          );
-        },
-        );
-      },
-    );
-  }
-
-  Widget _buildRadioTile<T>({
-    required String title,
-    required String subtitle,
-    required T value,
-    required T groupValue,
-    required ValueChanged<T?> onChanged,
-  }) {
-    final isSelected = value == groupValue;
-    return GestureDetector(
-      onTap: () => onChanged(value),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFBF4ED) : const Color(0xFFFAF7F2),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? const Color(0xFF7A132B) : const Color(0xFFEDE0D5),
-            width: isSelected ? 1.4 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(
-              isSelected
-                  ? Icons.radio_button_checked_rounded
-                  : Icons.radio_button_unchecked_rounded,
-              color: isSelected ? const Color(0xFF7A132B) : Colors.grey,
-              size: 20,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
-                      color: const Color(0xFF333333),
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(fontSize: 10.5, color: Color(0xFF7A686B)),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ==========================================
-  // 2. NOTIFICATION PREFERENCES SHEET
+  // 1. NOTIFICATION PREFERENCES SHEET
   // ==========================================
   void _showNotificationPreferencesSheet(BuildContext context) {
     bool tempMatches = _notifyNewMatches;

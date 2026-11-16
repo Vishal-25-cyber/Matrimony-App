@@ -25,29 +25,14 @@ class ShortlistScreen extends StatefulWidget {
 }
 
 class _ShortlistScreenState extends State<ShortlistScreen> {
-  bool _isLoading = false;
-
   @override
   void initState() {
     super.initState();
     final authUser = AuthService().currentUser;
     if (authUser != null) {
-      if (widget.mockData.shortlistedProfiles.isEmpty) {
-        _isLoading = true;
-      }
       widget.mockData.syncWithAuthAsync(authUser).then((_) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }).catchError((_) {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      });
+        if (mounted) setState(() {});
+      }).catchError((_) {});
     }
   }
 
@@ -592,22 +577,8 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
               ],
             ),
           ),
-          body: _isLoading && shortlisted.isEmpty
-              ? const Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircularProgressIndicator(color: Color(0xFF7A132B)),
-                      SizedBox(height: 16),
-                      Text(
-                        "வரன்கள் ஏற்றப்படுகிறது... / Loading Liked Profiles...",
-                        style: TextStyle(fontSize: 13, color: Color(0xFF6B585C), fontWeight: FontWeight.w500),
-                      ),
-                    ],
-                  ),
-                )
-              : shortlisted.isEmpty
-                  ? Center(
+          body: shortlisted.isEmpty
+              ? Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
                     child: Column(
@@ -1015,6 +986,18 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                           ? Image.network(
                               CloudflareR2Service().ensureDisplayableUrl(profile.profileImageUrl!),
                               fit: BoxFit.cover,
+                              cacheWidth: 120,
+                              cacheHeight: 120,
+                              filterQuality: FilterQuality.medium,
+                              frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                if (wasSynchronouslyLoaded) return child;
+                                return AnimatedOpacity(
+                                  opacity: frame == null ? 0 : 1,
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                  child: child,
+                                );
+                              },
                               errorBuilder: (_, _, _) => Icon(
                                 profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
                                 color: const Color(0xFF7A132B),
@@ -1025,6 +1008,18 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                               ? Image.asset(
                                   profile.imageAsset!,
                                   fit: BoxFit.cover,
+                                  cacheWidth: 120,
+                                  cacheHeight: 120,
+                                  filterQuality: FilterQuality.medium,
+                                  frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+                                    if (wasSynchronouslyLoaded) return child;
+                                    return AnimatedOpacity(
+                                      opacity: frame == null ? 0 : 1,
+                                      duration: const Duration(milliseconds: 200),
+                                      curve: Curves.easeOut,
+                                      child: child,
+                                    );
+                                  },
                                   errorBuilder: (_, _, _) => Icon(
                                     profile.gender.toLowerCase() == 'bride' ? Icons.person_3_rounded : Icons.person_rounded,
                                     color: const Color(0xFF7A132B),
@@ -1062,69 +1057,87 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                             constraints: const BoxConstraints(),
                             icon: const Icon(Icons.favorite_rounded, color: Color(0xFFC62828), size: 22),
                             onPressed: () {
-                              final pName = profile.name;
                               final pId = profile.id;
                               widget.mockData.toggleShortlist(pId);
-                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(alpha: 0.15),
-                                          shape: BoxShape.circle,
+                              // Show Tamil-only removed popup
+                              showDialog(
+                                context: context,
+                                barrierDismissible: true,
+                                builder: (_) => Dialog(
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                                  backgroundColor: Colors.transparent,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 28),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFF4A0E1C),
+                                      borderRadius: BorderRadius.circular(20),
+                                      border: Border.all(color: const Color(0xFFD4AF37), width: 1.5),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(alpha: 0.3),
+                                          blurRadius: 20,
+                                          offset: const Offset(0, 6),
                                         ),
-                                        child: const Icon(
-                                          Icons.favorite_border_rounded,
-                                          color: Color(0xFFF3E5AB),
-                                          size: 18,
+                                      ],
+                                    ),
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(14),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.1),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.favorite_border_rounded,
+                                            color: Color(0xFFF3E5AB),
+                                            size: 32,
+                                          ),
                                         ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              pName,
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white,
+                                        const SizedBox(height: 16),
+                                        const Text(
+                                          "நீக்கப்பட்டது!",
+                                          style: TextStyle(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.bold,
+                                            color: Color(0xFFF3E5AB),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 8),
+                                        const Text(
+                                          "விருப்பப்பட்டியலில் இருந்து\nவெற்றிகரமாக நீக்கப்பட்டது.",
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            fontSize: 13,
+                                            color: Color(0xFFEDE0D5),
+                                            height: 1.5,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 20),
+                                        SizedBox(
+                                          width: double.infinity,
+                                          child: ElevatedButton(
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: const Color(0xFFD4AF37),
+                                              foregroundColor: const Color(0xFF4A0E1C),
+                                              shape: RoundedRectangleBorder(
+                                                borderRadius: BorderRadius.circular(12),
                                               ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
+                                              padding: const EdgeInsets.symmetric(vertical: 12),
                                             ),
-                                            const Text(
-                                              "விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது",
+                                            onPressed: () => Navigator.of(context).pop(),
+                                            child: const Text(
+                                              "சரி",
                                               style: TextStyle(
-                                                fontSize: 11,
-                                                color: Color(0xFFEDE0D5),
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.bold,
                                               ),
                                             ),
-                                          ],
+                                          ),
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                  backgroundColor: const Color(0xFF4A0E1C),
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                    side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
-                                  ),
-                                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  elevation: 8,
-                                  duration: const Duration(seconds: 4),
-                                  action: SnackBarAction(
-                                    label: "மீட்டெடு (Undo)",
-                                    textColor: const Color(0xFFF3E5AB),
-                                    onPressed: () {
-                                      widget.mockData.toggleShortlist(pId);
-                                    },
+                                      ],
+                                    ),
                                   ),
                                 ),
                               );

@@ -70,13 +70,23 @@ class PaymentRequestModel {
   }
 
   factory PaymentRequestModel.fromMap(Map<String, dynamic> map) {
+    final rawProfileIds = map['profileIds'];
+    final List<String> profileIdsList = (rawProfileIds is List)
+        ? rawProfileIds.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+        : (rawProfileIds?.toString().split(RegExp(r'[\s,]+')).where((e) => e.isNotEmpty).toList() ?? []);
+
+    final rawProfileNames = map['profileNames'];
+    final List<String> profileNamesList = (rawProfileNames is List)
+        ? rawProfileNames.map((e) => e.toString().trim()).where((e) => e.isNotEmpty).toList()
+        : (rawProfileNames?.toString().split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() ?? []);
+
     return PaymentRequestModel(
       id: map['id']?.toString() ?? '',
       userId: map['userId']?.toString() ?? '',
       userName: map['userName']?.toString() ?? '',
       userPhone: map['userPhone']?.toString() ?? '',
-      profileIds: (map['profileIds'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
-      profileNames: (map['profileNames'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [],
+      profileIds: profileIdsList,
+      profileNames: profileNamesList,
       totalAmount: (map['totalAmount'] is num) ? (map['totalAmount'] as num).toDouble() : 25.0,
       utrNumber: map['utrNumber']?.toString() ?? '',
       paymentMethod: map['paymentMethod']?.toString() ?? "UPI QR Code (GPay / PhonePe / Paytm)",

@@ -51,6 +51,28 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _precacheCoreAssets();
+  }
+
+  void _precacheCoreAssets() {
+    const assets = [
+      'assets/images/tamil_wedding_banner.jpg',
+      'assets/images/bride_soundarya.jpg',
+      'assets/images/doctor_kavitha.jpg',
+      'assets/images/bride_sneha.jpg',
+      'assets/images/user_karthik.jpg',
+      'assets/images/founder_arumugam.jpg',
+      'assets/images/wedding_couple.jpg',
+      'assets/images/app_crest.jpg',
+    ];
+    for (final a in assets) {
+      precacheImage(AssetImage(a), context).catchError((_) {});
+    }
+  }
+
+  @override
   void dispose() {
     _controller.dispose();
     super.dispose();
