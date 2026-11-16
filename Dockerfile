@@ -1,17 +1,21 @@
-# Official Dart runtime image for building backend binary
+# Stage 1: Build standalone Dart backend binary
 FROM dart:stable AS build
 
 WORKDIR /app
-COPY pubspec.* ./
+
+# Copy pure Dart backend dependencies (isolated from Flutter client)
+COPY backend/pubspec.* ./
 RUN dart pub get
 
-COPY . .
+# Copy backend source code and compile native server binary
+COPY backend/ ./
 RUN dart compile exe bin/db_bridge.dart -o bin/server
 
-# Lightweight runtime image
+# Stage 2: Minimal runtime image
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 COPY --from=build /app/bin/server /app/bin/server
 
 EXPOSE 8080

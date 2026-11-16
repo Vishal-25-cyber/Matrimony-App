@@ -10,7 +10,13 @@ import 'package:mongo_dart/mongo_dart.dart';
 // ==============================================================================
 Map<String, String> loadEnvFile([String path = '.env']) {
   final env = <String, String>{};
-  final file = File(path);
+  File file = File(path);
+  if (!file.existsSync()) {
+    final parentFile = File('../$path');
+    if (parentFile.existsSync()) {
+      file = parentFile;
+    }
+  }
   if (file.existsSync()) {
     try {
       final lines = file.readAsLinesSync();
@@ -28,7 +34,7 @@ Map<String, String> loadEnvFile([String path = '.env']) {
         }
       }
     } catch (e) {
-      print("ℹ [Bridge] Notice reading $path: $e");
+      print("ℹ [Bridge] Notice reading ${file.path}: $e");
     }
   }
   return env;
@@ -40,21 +46,18 @@ String getEnv(String key, [String defaultValue = '']) {
 }
 
 // Cloudflare R2 Credentials & Parameters loaded strictly on server-side
-final String r2AccountId = getEnv('CLOUDFLARE_R2_ACCOUNT_ID', 'b535b7c908a09f10d27773b1b9536777');
-final String r2AccessKeyId = getEnv('CLOUDFLARE_R2_ACCESS_KEY_ID', '16fa39f1d2e94ee5405a9995244691f0');
-final String r2SecretAccessKey = getEnv('CLOUDFLARE_R2_SECRET_ACCESS_KEY', '06dfc88dcbf86cb0174233ab6670274da20d30de78383b87d2c3d08a736e1bd3');
+final String r2AccountId = getEnv('CLOUDFLARE_R2_ACCOUNT_ID', '');
+final String r2AccessKeyId = getEnv('CLOUDFLARE_R2_ACCESS_KEY_ID', '');
+final String r2SecretAccessKey = getEnv('CLOUDFLARE_R2_SECRET_ACCESS_KEY', '');
 final String r2BucketName = getEnv('CLOUDFLARE_R2_BUCKET_NAME', 'matrimony-profile-images');
 final String r2Prefix = getEnv('CLOUDFLARE_R2_PREFIX', 'profiles/');
-final String r2Endpoint = getEnv('CLOUDFLARE_R2_ENDPOINT', 'https://$r2AccountId.r2.cloudflarestorage.com');
+final String r2Endpoint = getEnv('CLOUDFLARE_R2_ENDPOINT', r2AccountId.isNotEmpty ? 'https://$r2AccountId.r2.cloudflarestorage.com' : '');
 final String r2PublicUrlPrefix = getEnv('CLOUDFLARE_R2_PUBLIC_URL_PREFIX', '');
-final String r2Host = Uri.parse(r2Endpoint).host;
+final String r2Host = r2Endpoint.isNotEmpty ? (Uri.tryParse(r2Endpoint)?.host ?? '') : '';
 const String r2Region = "auto";
 final String mongoAtlasUri = () {
-  var uri = getEnv(
-    'MONGODB_ATLAS_URI',
-    'mongodb+srv://vishal250820_db_user:vishal25082006@portfolio.mo5wnyq.mongodb.net/pandarathar_matrimony?appName=portfolio&safeAtlas=true',
-  );
-  if (!uri.contains('safeAtlas=true')) {
+  var uri = getEnv('MONGODB_ATLAS_URI', '');
+  if (uri.isNotEmpty && !uri.contains('safeAtlas=true')) {
     uri += (uri.contains('?') ? '&' : '?') + 'safeAtlas=true';
   }
   return uri;
@@ -378,6 +381,10 @@ void main() async {
     }
     isConnecting = true;
     try {
+      if (mongoAtlasUri.isEmpty) {
+        print("⚠ [Bridge] MONGODB_ATLAS_URI environment variable is not configured.");
+        return null;
+      }
       if (db != null) {
         try {
           await db!.close().timeout(const Duration(seconds: 2));
@@ -399,7 +406,7 @@ void main() async {
   getDb().ignore();
 
   final server = await HttpServer.bind(InternetAddress.anyIPv4, port);
-  print("✓ Backend API listening at http://127.0.0.1:$port");
+  print("✓ Backend API listening on 0.0.0.0:$port (PORT=$port)");
 
   server.listen((HttpRequest request) async {
     // Add CORS headers for Flutter Web
