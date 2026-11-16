@@ -90,26 +90,31 @@ class HomeScreen extends StatelessWidget {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
+          final isWide = constraints.maxWidth >= 600;
+          final isDesktop = constraints.maxWidth >= 1024;
+          final double maxContentWidth = isDesktop ? 1040.0 : (isWide ? 760.0 : double.infinity);
+          final double bannerHeight = isDesktop ? 260.0 : (isWide ? 230.0 : 200.0);
+
           return SingleChildScrollView(
             physics: const BouncingScrollPhysics(parent: AlwaysScrollableScrollPhysics()),
             child: Align(
               alignment: Alignment.topCenter,
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 480),
+                constraints: BoxConstraints(maxWidth: maxContentWidth),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const SizedBox(height: 12),
 
                     // 1. Hero Wedding Banner
-                    _buildHeroBanner(context),
+                    _buildHeroBanner(context, bannerHeight),
 
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
 
                     // 2. Community Key Statistics Strip
                     _buildCommunityStatsStrip(),
 
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
 
                     // 3. Mini Member Dashboard (Personal Activity)
                     _buildMiniMemberDashboard(context),
@@ -128,12 +133,12 @@ class HomeScreen extends StatelessWidget {
   // ==========================================
   // 1. HERO WEDDING BANNER
   // ==========================================
-  Widget _buildHeroBanner(BuildContext context) {
+  Widget _buildHeroBanner(BuildContext context, [double height = 200]) {
     return GestureDetector(
       onTap: () => onNavigateToTab(1),
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 14),
-        height: 200,
+        height: height,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: const Color(0xFFEADCCE)),

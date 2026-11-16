@@ -14,9 +14,16 @@ class CloudflareR2Service {
   factory CloudflareR2Service() => _instance;
   CloudflareR2Service._internal();
 
+  /// Production Backend API configuration
+  /// Configurable via `--dart-define=BACKEND_URL=https://your-production-backend.com`
+  static const String productionBackendUrl = String.fromEnvironment(
+    'BACKEND_URL',
+    defaultValue: String.fromEnvironment('API_BASE_URL', defaultValue: ''),
+  );
+
   /// Candidate backend URLs for auto-discovery across Web, physical mobile (LAN), and emulator
   static const List<String> candidateHosts = [
-    String.fromEnvironment('BACKEND_URL', defaultValue: ''),
+    productionBackendUrl,
     'http://10.1.32.156:8765', // Host machine Wi-Fi LAN for physical mobile phones
     'http://10.0.2.2:8765',    // Android Emulator host loopback
     'http://127.0.0.1:8765',   // Web & adb reverse
@@ -25,19 +32,18 @@ class CloudflareR2Service {
 
   static String _activeBaseUrl = '';
 
-  /// Backend API base URL
+  /// Backend API base URL (Prioritizes HTTPS production URL when provided)
   static String get backendBaseUrl {
     if (_activeBaseUrl.isNotEmpty) return _activeBaseUrl;
-    const envUrl = String.fromEnvironment('BACKEND_URL', defaultValue: '');
-    if (envUrl.isNotEmpty) {
-      _activeBaseUrl = envUrl;
+    if (productionBackendUrl.isNotEmpty) {
+      _activeBaseUrl = productionBackendUrl;
       return _activeBaseUrl;
     }
     if (kIsWeb) {
       _activeBaseUrl = 'http://127.0.0.1:8765';
       return _activeBaseUrl;
     }
-    // On physical mobile devices (Android), connect via Wi-Fi LAN
+    // On physical mobile devices during development, connect via Wi-Fi LAN
     _activeBaseUrl = 'http://10.1.32.156:8765';
     return _activeBaseUrl;
   }

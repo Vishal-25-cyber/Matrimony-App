@@ -530,19 +530,22 @@ class _ContactUnlockDialogState extends State<ContactUnlockDialog> {
                                   fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       )
-                    : const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.send_rounded, size: 18),
-                          SizedBox(width: 10),
-                          Text(
-                            "ஒப்புதலுக்கு சமர்ப்பிக்கவும் / Submit",
-                            style: TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.2),
-                          ),
-                        ],
+                    : const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.send_rounded, size: 18),
+                            SizedBox(width: 10),
+                            Text(
+                              "ஒப்புதலுக்கு சமர்ப்பிக்கவும் / Submit",
+                              style: TextStyle(
+                                  fontSize: 14.5,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.2),
+                            ),
+                          ],
+                        ),
                       ),
               ),
             ),

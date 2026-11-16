@@ -3,6 +3,7 @@ import '../../core/constants/app_constants.dart';
 import '../../core/theme/app_colors.dart';
 import '../../services/mock_data_service.dart';
 import '../../services/auth_service.dart';
+import '../../services/mongodb_service.dart';
 import '../auth/login_screen.dart';
 import '../profiles/edit_profile_screen.dart';
 import '../contacts/contact_us_screen.dart';
@@ -143,7 +144,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _showPrivacyPolicyDialog(context),
           ),
 
-
+          // 9. Delete Account
+          _buildListTile(
+            icon: Icons.delete_forever_outlined,
+            title: 'Delete Account / கணக்கு நிரந்தர நீக்கம்',
+            subtitle: 'Permanently remove your profile and all personal data',
+            onTap: () => _showDeleteAccountDialog(context),
+          ),
 
           const SizedBox(height: 28),
 
@@ -1007,5 +1014,128 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  // ==========================================
+  // 8. DELETE ACCOUNT FLOW (Google Play Requirement)
+  // ==========================================
+  void _showDeleteAccountDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: Color(0xFFC62828), size: 24),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                "கணக்கு நீக்கம் / Delete Account",
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF7A132B)),
+              ),
+            ),
+          ],
+        ),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "உங்கள் கணக்கை நிரந்தரமாக நீக்க விரும்புகிறீர்களா?",
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF2C1E20)),
+            ),
+            SizedBox(height: 8),
+            Text(
+              "• இந்த செயலை மாற்றியமைக்க முடியாது.\n• உங்களின் பெயர், புகைப்படம், ஜாதகம் மற்றும் அனைத்து விவரங்களும் தரவுத்தளத்தில் இருந்து நிரந்தரமாக அழிக்கப்படும்.\n• அனைத்து திறக்கப்பட்ட தொடர்புகளும் நீக்கப்படும்.",
+              style: TextStyle(fontSize: 11.5, color: Color(0xFF6B585C), height: 1.4),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text("ரத்து செய் / Cancel", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFC62828),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            onPressed: () {
+              Navigator.pop(dialogCtx);
+              _handleDeleteAccount();
+            },
+            child: const Text("நிரந்தரமாக நீக்குக / Delete", style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleDeleteAccount() async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: Color(0xFFC62828)),
+                SizedBox(height: 16),
+                Text(
+                  "கணக்கு நீக்கப்படுகிறது... / Deleting account...",
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final authUser = AuthService().currentUser;
+    final profile = widget.mockData.currentUser;
+    final profileId = profile.id;
+    final phone = authUser?.phone ?? profile.phone;
+
+    bool success = false;
+    try {
+      success = await MongoDBService().deleteProfile(profileId, phone: phone);
+    } catch (_) {
+      success = false;
+    }
+
+    if (!mounted) return;
+    Navigator.pop(context); // Pop loading dialog
+
+    if (success) {
+      AuthService().logout();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("✓ உங்கள் கணக்கு நிரந்தரமாக நீக்கப்பட்டது. / Your account has been permanently deleted."),
+          backgroundColor: Color(0xFF1B6B38),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("⚠ கணக்கை நீக்குவதில் பிழை ஏற்பட்டது. மீண்டும் முயற்சிக்கவும்."),
+          backgroundColor: Color(0xFFC62828),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 }

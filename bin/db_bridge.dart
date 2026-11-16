@@ -865,6 +865,29 @@ void main() async {
         return;
       }
 
+      if (path == '/api/users' && request.method == 'GET') {
+        try {
+          final usersCol = activeDb.collection('users');
+          final allUsers = await usersCol.find().toList();
+          final cleanList = allUsers.map((u) {
+            final m = Map<String, dynamic>.from(u);
+            m.remove('_id');
+            return m;
+          }).toList();
+          request.response.statusCode = HttpStatus.ok;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': true, 'users': cleanList}));
+          await request.response.close();
+          return;
+        } catch (e) {
+          request.response.statusCode = HttpStatus.internalServerError;
+          request.response.headers.contentType = ContentType.json;
+          request.response.write(jsonEncode({'success': false, 'error': e.toString()}));
+          await request.response.close();
+          return;
+        }
+      }
+
       if (path == '/api/user' && request.method == 'GET') {
         final query = request.uri.queryParameters['query'] ?? '';
         final queryLower = query.toLowerCase();

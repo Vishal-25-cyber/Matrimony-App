@@ -11,6 +11,7 @@ class ProfileCard extends StatelessWidget {
   final VoidCallback onSendInterest;
   final VoidCallback? onUnlockContact;
   final MockDataService? mockData;
+  final EdgeInsetsGeometry? margin;
 
   const ProfileCard({
     super.key,
@@ -20,12 +21,13 @@ class ProfileCard extends StatelessWidget {
     required this.onSendInterest,
     this.onUnlockContact,
     this.mockData,
+    this.margin,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: margin ?? const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),

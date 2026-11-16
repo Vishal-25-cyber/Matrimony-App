@@ -7,9 +7,12 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   PaintingBinding.instance.imageCache.maximumSize = 1000;
   PaintingBinding.instance.imageCache.maximumSizeBytes = 150 << 20; // 150 MB
+  // Support both portrait and landscape across tablets and foldable devices
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
+    DeviceOrientation.landscapeLeft,
+    DeviceOrientation.landscapeRight,
   ]);
   runApp(const MatrimonyApp());
 }
@@ -23,59 +26,6 @@ class MatrimonyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'பண்டாரத்தார் மண மாலை - Pandarathar Mana Maalai',
       theme: AppTheme.lightTheme,
-      builder: (context, child) {
-        if (child == null) return const SplashScreen();
-
-        return LayoutBuilder(
-          builder: (context, constraints) {
-            // When viewed on desktop, web browser or wide monitor, wrap inside a smartphone frame
-            if (constraints.maxWidth > 500) {
-              final double maxAvailHeight = constraints.maxHeight.isFinite ? constraints.maxHeight : 844.0;
-              final double verticalMargin = maxAvailHeight > 750 ? 12.0 : 4.0;
-              const double borderWidth = 6.0;
-              // Ensure frame and its margins strictly fit within viewport height without triggering scrollbars
-              final double frameHeight = (maxAvailHeight - (verticalMargin * 2) - (borderWidth * 2))
-                  .clamp(480.0, 900.0);
-
-              return ColoredBox(
-                color: const Color(0xFF1E0E14),
-                child: Center(
-                  child: Container(
-                    width: 420,
-                    height: frameHeight + (borderWidth * 2),
-                    margin: EdgeInsets.symmetric(vertical: verticalMargin),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(32),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x8C000000),
-                          blurRadius: 32,
-                          spreadRadius: 4,
-                          offset: Offset(0, 8),
-                        ),
-                      ],
-                      border: Border.all(
-                        color: const Color(0xFF3B1822),
-                        width: borderWidth,
-                      ),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: MediaQuery(
-                      data: MediaQuery.of(context).copyWith(
-                        size: Size(420 - (borderWidth * 2), frameHeight),
-                      ),
-                      child: child,
-                    ),
-                  ),
-                ),
-              );
-            }
-            // On mobile devices (width <= 500), fill native viewport
-            return child;
-          },
-        );
-      },
       home: const SplashScreen(),
     );
   }

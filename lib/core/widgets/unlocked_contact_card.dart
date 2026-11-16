@@ -37,12 +37,15 @@ class UnlockedContactCard extends StatelessWidget {
             children: [
               const Icon(Icons.check_circle_rounded, color: AppColors.success, size: 22),
               const SizedBox(width: 8),
-              Text(
-                AppConstants.contactUnlockedText,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.success,
+              Expanded(
+                child: Text(
+                  AppConstants.contactUnlockedText,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.success,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],

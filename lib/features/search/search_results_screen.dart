@@ -186,89 +186,118 @@ class _SearchResultsScreenState extends State<SearchResultsScreen> {
                           ),
                         ),
                       )
-                    : ListView.builder(
-                        padding: EdgeInsets.fromLTRB(14, 6, 14, cartCount > 0 ? 80 : 14),
-                        itemCount: displayList.length,
-                        itemBuilder: (context, index) {
-                          final profile = displayList[index];
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          final double width = constraints.maxWidth;
+                          final int columns = width >= 1024 ? 3 : (width >= 600 ? 2 : 1);
+                          final double maxContainerWidth = width >= 1024 ? 1200.0 : (width >= 600 ? 840.0 : double.infinity);
 
-                          return ProfileCard(
-                            profile: profile,
-                            onTap: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ProfileDetailsScreen(
-                                    profileId: profile.id,
-                                    mockData: widget.mockData,
+                          Widget buildCard(ProfileModel profile, {EdgeInsetsGeometry? margin}) {
+                            return ProfileCard(
+                              profile: profile,
+                              margin: margin,
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ProfileDetailsScreen(
+                                      profileId: profile.id,
+                                      mockData: widget.mockData,
+                                    ),
                                   ),
-                                ),
-                              );
-                            },
-                            onShortlistToggle: () {
-                              final wasShortlisted = profile.isShortlisted;
-                              widget.mockData.toggleShortlist(profile.id);
-                              ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Row(
-                                    children: [
-                                      Container(
-                                        padding: const EdgeInsets.all(6),
-                                        decoration: BoxDecoration(
-                                          color: Colors.white.withValues(alpha: 0.15),
-                                          shape: BoxShape.circle,
+                                );
+                              },
+                              onShortlistToggle: () {
+                                final wasShortlisted = profile.isShortlisted;
+                                widget.mockData.toggleShortlist(profile.id);
+                                ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(6),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.15),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            wasShortlisted ? Icons.favorite_border_rounded : Icons.favorite_rounded,
+                                            color: const Color(0xFFF3E5AB),
+                                            size: 18,
+                                          ),
                                         ),
-                                        child: Icon(
-                                          wasShortlisted ? Icons.favorite_border_rounded : Icons.favorite_rounded,
-                                          color: const Color(0xFFF3E5AB),
-                                          size: 18,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              profile.name,
-                                              style: const TextStyle(
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.white,
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                profile.name,
+                                                style: const TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: Colors.white,
+                                                ),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                               ),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            Text(
-                                              wasShortlisted
-                                                  ? "விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது"
-                                                  : "விருப்பப்பட்டியலில் சேர்க்கப்பட்டது! ✓",
-                                              style: const TextStyle(
-                                                fontSize: 11,
-                                                color: Color(0xFFEDE0D5),
+                                              Text(
+                                                wasShortlisted
+                                                    ? "விருப்பப்பட்டியலில் இருந்து நீக்கப்பட்டது"
+                                                    : "விருப்பப்பட்டியலில் சேர்க்கப்பட்டது! ✓",
+                                                style: const TextStyle(
+                                                  fontSize: 11,
+                                                  color: Color(0xFFEDE0D5),
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
+                                    duration: const Duration(seconds: 3),
+                                    behavior: SnackBarBehavior.floating,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                      side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
+                                    ),
+                                    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                                    elevation: 8,
+                                    backgroundColor: const Color(0xFF4A0E1C),
                                   ),
-                                  duration: const Duration(seconds: 3),
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                    side: const BorderSide(color: Color(0x33F3E5AB), width: 1),
+                                );
+                              },
+                              onSendInterest: () => widget.mockData.sendInterest(profile.id),
+                              mockData: widget.mockData,
+                            );
+                          }
+
+                          if (columns > 1) {
+                            return Align(
+                              alignment: Alignment.topCenter,
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(maxWidth: maxContainerWidth),
+                                child: GridView.builder(
+                                  padding: EdgeInsets.fromLTRB(16, 10, 16, cartCount > 0 ? 80 : 16),
+                                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: columns,
+                                    mainAxisExtent: 220,
+                                    crossAxisSpacing: 14,
+                                    mainAxisSpacing: 14,
                                   ),
-                                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                                  elevation: 8,
-                                  backgroundColor: const Color(0xFF4A0E1C),
+                                  itemCount: displayList.length,
+                                  itemBuilder: (context, index) => buildCard(displayList[index], margin: EdgeInsets.zero),
                                 ),
-                              );
-                            },
-                            onSendInterest: () => widget.mockData.sendInterest(profile.id),
-                            mockData: widget.mockData,
+                              ),
+                            );
+                          }
+
+                          return ListView.builder(
+                            padding: EdgeInsets.fromLTRB(14, 6, 14, cartCount > 0 ? 80 : 14),
+                            itemCount: displayList.length,
+                            itemBuilder: (context, index) => buildCard(displayList[index]),
                           );
                         },
                       ),

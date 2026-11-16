@@ -244,9 +244,13 @@ class _SearchFilterScreenState extends State<SearchFilterScreen> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 820),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
             // 1. Selected during signup (Locked to what the user chose)
             Container(
               margin: const EdgeInsets.only(bottom: 16),
@@ -789,7 +793,9 @@ class _SearchFilterScreenState extends State<SearchFilterScreen> {
           ],
         ),
       ),
-    );
+    ),
+  ),
+);
   }
 
   Widget _buildDoshamOption({

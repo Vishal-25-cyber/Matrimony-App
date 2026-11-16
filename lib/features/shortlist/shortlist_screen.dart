@@ -616,9 +616,13 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                     ),
                   ),
                 )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
-                  children: [
+              : Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 860),
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(14, 14, 14, 20),
+                      children: [
                     // 1. If there are locked profiles to pay for: show the clean payment summary card
                     if (toUnlockProfiles.isNotEmpty) ...[
                       _buildCartSummaryCard(
@@ -676,6 +680,8 @@ class _ShortlistScreenState extends State<ShortlistScreen> {
                     }),
                   ],
                 ),
+              ),
+            ),
         );
       },
     );

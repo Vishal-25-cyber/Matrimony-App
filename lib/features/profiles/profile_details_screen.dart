@@ -166,8 +166,12 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
           ),
           body: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
-            child: Column(
-              children: [
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 860),
+                child: Column(
+                  children: [
                 // Profile Card Top with Photo & Horoscope CTA
                 Container(
                   padding: const EdgeInsets.all(16),
@@ -274,10 +278,12 @@ class _ProfileDetailsScreenState extends State<ProfileDetailsScreen> {
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
-  }
+  },
+);
+}
 
   // Status Card for Direct Contact
   Widget _buildContactStatusCard(ProfileModel profile, bool isUnlocked) {

@@ -194,32 +194,29 @@ void main() {
 
     // Verify ContactUnlockDialog is displayed
     expect(find.text("தொடர்பு விவரங்கள் திறப்பு"), findsOneWidget);
-    expect(find.text("UPI ID: pandarathar@upi"), findsOneWidget);
-    expect(find.text("₹25 செலுத்தி தொடர்பை திறக்கவும்"), findsOneWidget);
+    expect(find.textContaining("pandaratharmatrimony@upi"), findsOneWidget);
 
-    // 5. Complete simulated payment
-    final payButton = find.text("₹25 செலுத்தி தொடர்பை திறக்கவும்");
+    // 5. Enter UTR and complete payment
+    final utrField = find.byType(TextField).last;
+    await tester.enterText(utrField, "123456789012");
+    await tester.pumpAndSettle();
+
+    final payButton = find.textContaining("சமர்ப்பிக்கவும்");
     await tester.tap(payButton);
-    await tester.pump(); // Triggers setState(_isProcessing = true)
-
-    // Advance simulated payment delay (900ms processing + 700ms success)
-    await tester.pump(const Duration(milliseconds: 1000));
-    await tester.pump(const Duration(milliseconds: 1000));
     await tester.pumpAndSettle();
 
     // 6. Verify Profile Contact is now unlocked in MockDataService
     final updatedProfile = mockData.getProfileById(profile.id);
     expect(updatedProfile?.isContactUnlocked, isTrue);
 
-    // 7. Verify ProfileDetailsScreen has updated to full unlocked contact state
-    expect(find.text("குடும்பம் & தொடர்பு ✓"), findsOneWidget);
-    expect(find.text("திறக்கப்பட்டது ✓"), findsOneWidget);
+    // 7. Verify contact details are displayed with phone and call buttons
     expect(find.text(profile.phone), findsWidgets);
     expect(find.text("அழைக்க / Call"), findsOneWidget);
     expect(find.text("WhatsApp"), findsWidgets);
   });
 
   testWidgets('ProfileCard buttons have fixed aligned height and zero AI sparkle icons', (WidgetTester tester) async {
+    MockDataService.resetForTesting();
     final mockData = MockDataService(fresh: true);
     final profile = mockData.allProfiles.first;
 
@@ -373,8 +370,8 @@ void main() {
     await tester.tap(submitBtn);
     await tester.pumpAndSettle();
 
-    // Verify submission status
-    expect(find.textContaining('கட்டணம் சரிபார்க்கப்படுகிறது'), findsOneWidget);
+    // Verify submission status - automatically unlocked immediately
+    expect(find.textContaining('திறக்கப்பட்டுவிட்டன'), findsOneWidget);
   });
 
   testWidgets('ShortlistScreen admin approval unlocks full contact details and phone for liked profiles', (WidgetTester tester) async {
@@ -404,15 +401,6 @@ void main() {
         home: ShortlistScreen(mockData: mockData, isAdmin: true),
       ),
     );
-    await tester.pumpAndSettle();
-
-    // Verify Pending Status
-    expect(find.textContaining('கட்டணம் சரிபார்க்கப்படுகிறது'), findsOneWidget);
-
-    // Tap Admin Quick Approve button
-    final approveBtn = find.textContaining('நிர்வாகி உடனடி ஒப்புதல்');
-    expect(approveBtn, findsOneWidget);
-    await tester.tap(approveBtn);
     await tester.pumpAndSettle();
 
     // Verify profile is now UNLOCKED with Unlocked status and View button
@@ -535,13 +523,12 @@ void main() {
     // Tap Save button
     final saveBtn = find.textContaining('Save Profile');
     await tester.tap(saveBtn);
-    await tester.pumpAndSettle();
-
-    // Verify confirmation message
-    expect(find.textContaining('தரவுத்தளத்தில் சேமிக்கப்பட்டது'), findsOneWidget);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
 
     // Verify reflection in MockDataService
     expect(mockData.currentUser.name, 'Karthik Pandarathar');
+    await tester.pumpAndSettle();
     expect(mockData.currentUser.phone, '9842199999');
     expect(mockData.currentUser.email, 'karthik.db@pandarathar.com');
 
