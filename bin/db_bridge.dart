@@ -357,7 +357,7 @@ String generateR2PresignedUrl(String objectKey, {int expiresInSeconds = 604800})
 // 5. SERVER ENTRYPOINT & HTTP ROUTING
 // ==============================================================================
 void main() async {
-  const port = 8765;
+  final port = int.tryParse(Platform.environment['PORT'] ?? '') ?? 8765;
 
   print("Starting Secure Cloudflare R2 & MongoDB Atlas HTTP API on port $port...");
   Db? db;

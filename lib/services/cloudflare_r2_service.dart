@@ -21,14 +21,24 @@ class CloudflareR2Service {
     defaultValue: String.fromEnvironment('API_BASE_URL', defaultValue: ''),
   );
 
-  /// Candidate backend URLs for auto-discovery across Web, physical mobile (LAN), and emulator
-  static const List<String> candidateHosts = [
-    productionBackendUrl,
-    'http://10.1.32.156:8765', // Host machine Wi-Fi LAN for physical mobile phones
-    'http://10.0.2.2:8765',    // Android Emulator host loopback
-    'http://127.0.0.1:8765',   // Web & adb reverse
-    'http://localhost:8765',
-  ];
+  /// Candidate backend URLs for auto-discovery
+  /// In release mode, only the explicit production URL is accepted (no localhost fallback)
+  static List<String> get candidateHosts {
+    if (productionBackendUrl.isNotEmpty) {
+      return [productionBackendUrl];
+    }
+    // In production release without compile-time URL, do NOT fallback to dev IPs
+    if (kReleaseMode) {
+      return const [];
+    }
+    // Development / Test only:
+    return const [
+      'http://10.1.32.156:8765', // Host machine Wi-Fi LAN for physical mobile phones
+      'http://10.0.2.2:8765',    // Android Emulator host loopback
+      'http://127.0.0.1:8765',   // Web & adb reverse
+      'http://localhost:8765',
+    ];
+  }
 
   static String _activeBaseUrl = '';
 
@@ -38,6 +48,10 @@ class CloudflareR2Service {
     if (productionBackendUrl.isNotEmpty) {
       _activeBaseUrl = productionBackendUrl;
       return _activeBaseUrl;
+    }
+    // In production release without compile-time backend URL, do NOT fall back to local dev IPs
+    if (kReleaseMode) {
+      return '';
     }
     if (kIsWeb) {
       _activeBaseUrl = 'http://127.0.0.1:8765';
@@ -50,6 +64,8 @@ class CloudflareR2Service {
 
   /// Discovers the active reachable backend host in real-time
   static Future<String> getResolvedBackendUrl() async {
+    if (productionBackendUrl.isNotEmpty) return productionBackendUrl;
+    if (kReleaseMode) return '';
     if (kIsWeb) return 'http://127.0.0.1:8765';
     if (_activeBaseUrl.isNotEmpty && _activeBaseUrl != 'http://127.0.0.1:8765') {
       return _activeBaseUrl;

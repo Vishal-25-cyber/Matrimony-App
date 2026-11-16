@@ -1,7 +1,7 @@
 class AppConstants {
-  static const String appNameTamil = "பண்டாரத்தார் மண மாலை";
-  static const String appNameEnglish = "PANDARATHAR MANA MAALAI";
-  static const String appName = "பண்டாரத்தார் மண மாலை";
+  static const String appNameTamil = "பண்டாரத்தார் மேட்ரிமோனி";
+  static const String appNameEnglish = "Pandarathar Matrimony";
+  static const String appName = "Pandarathar Matrimony";
   static const String serviceCenterTamil = "பண்டாரத்தார் ஜாதக பரிவர்த்தனை சேவை மையம்";
   
   // Founder Details (From business visiting card)
